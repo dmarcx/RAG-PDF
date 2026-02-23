@@ -248,10 +248,11 @@ def delete_source(source_name: str) -> int:
     return len(מזהים)
 
 
-def search_and_answer(question: str) -> str:
+def search_and_answer(question: str, history: list[tuple[str, str]] | None = None) -> str:
     """
     מתרגם את השאלה לאנגלית, מחפש ב-ChromaDB את 10 החלקים הרלוונטיים,
-    ושולח אותם יחד עם השאלה המקורית ל-Anthropic API לקבלת תשובה.
+    ושולח אותם יחד עם השאלה המקורית והיסטוריית השיחה ל-Anthropic API.
+    history: רשימה של (שאלה, תשובה) מהסבבים הקודמים.
     """
     לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
@@ -285,22 +286,32 @@ def search_and_answer(question: str) -> str:
         for מקור, טקסט in zip(מקורות, חלקים_רלוונטיים)
     )
 
-    # --- שלב 3: תשובה על בסיס ההקשר שנמצא ---
-    פרומפט = f"""אתה עוזר שעונה על שאלות בהתבסס על מסמכי PDF.
-ענה בשפה שבה נשאלת השאלה המקורית (עברית או אנגלית).
-ענה רק על בסיס המידע הנתון. ציין מאיזה קובץ המידע מגיע.
-אם התשובה לא נמצאת בהקשר, אמור זאת בפירוש.
+    # --- שלב 3: בניית רשימת ההודעות כולל היסטוריית השיחה ---
+    system_prompt = (
+        "אתה עוזר שעונה על שאלות בהתבסס על מסמכי PDF.\n"
+        "ענה בשפה שבה נשאלת השאלה המקורית (עברית או אנגלית).\n"
+        "ענה רק על בסיס המידע הנתון. ציין מאיזה קובץ המידע מגיע.\n"
+        "אם התשובה לא נמצאת בהקשר, אמור זאת בפירוש.\n\n"
+        f"הקשר מהמסמכים:\n{הקשר}"
+    )
 
-הקשר מהמסמכים:
-{הקשר}
+    # בונה את רשימת ההודעות: היסטוריה + שאלה נוכחית
+    הודעות = []
+    for שאלה_קודמת, תשובה_קודמת in (history or []):
+        הודעות.append({"role": "user",      "content": שאלה_קודמת})
+        הודעות.append({"role": "assistant", "content": תשובה_קודמת})
 
-שאלה מקורית: {question}
-(תורגמה לחיפוש: {שאלה_באנגלית})"""
+    # מוסיף את השאלה הנוכחית
+    הודעות.append({
+        "role": "user",
+        "content": f"שאלה מקורית: {question}\n(תורגמה לחיפוש: {שאלה_באנגלית})",
+    })
 
     תגובה = לקוח_anthropic.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=1024,
-        messages=[{"role": "user", "content": פרומפט}],
+        system=system_prompt,
+        messages=הודעות,
     )
 
     return תגובה.content[0].text

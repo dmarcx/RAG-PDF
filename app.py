@@ -33,6 +33,7 @@ st.set_page_config(
 # ========================
 # כותרת ראשית
 # ========================
+st.markdown("# MANARA Project")
 st.title("📄 RAG-PDF – שאל שאלות על המסמכים שלך")
 st.markdown("---")
 
@@ -181,23 +182,47 @@ st.markdown("---")
 # מצב: שאלה חופשית
 # ========================
 if מצב == "❓ שאלה חופשית":
-    st.subheader("❓ שאל שאלה")
-    שאלה = st.text_area(
-        "הקלד את שאלתך (עברית או אנגלית):",
-        height=100,
-        placeholder="לדוגמה: מהם דרישות ההארקה לפי התקן הישראלי?",
-    )
+    st.subheader("❓ שאלה חופשית")
 
-    if st.button("🔍 חפש תשובה", type="primary", use_container_width=False):
-        if not שאלה.strip():
-            st.warning("נא להקליד שאלה.")
-        elif not get_existing_sources():
+    # אתחול היסטוריית שיחה ב-session_state
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = []  # רשימה של (שאלה, תשובה)
+
+    # כפתור ניקוי היסטוריה
+    if st.session_state["chat_history"]:
+        if st.button("🗑️ נקה היסטוריה", key="clear_history"):
+            st.session_state["chat_history"] = []
+            st.rerun()
+
+    # הצגת ההיסטוריה כבועות שיחה
+    for שאלה_קודמת, תשובה_קודמת in st.session_state["chat_history"]:
+        with st.chat_message("user"):
+            st.markdown(שאלה_קודמת)
+        with st.chat_message("assistant"):
+            st.markdown(תשובה_קודמת)
+
+    # תיבת שאלה חדשה
+    שאלה = st.chat_input("שאל שאלה (עברית או אנגלית)...")
+
+    if שאלה:
+        if not get_existing_sources():
             st.error("אין מסמכים טעונים. העלה PDF תחילה.")
         else:
-            with st.spinner("מחפש תשובה..."):
-                תשובה = search_and_answer(שאלה)
-            st.markdown("### 💬 תשובה")
-            st.markdown(תשובה)
+            # מציג את שאלת המשתמש מיד
+            with st.chat_message("user"):
+                st.markdown(שאלה)
+
+            # שולח לClaude עם כל ההיסטוריה
+            with st.chat_message("assistant"):
+                with st.spinner("מחפש תשובה..."):
+                    תשובה = search_and_answer(
+                        שאלה,
+                        history=st.session_state["chat_history"],
+                    )
+                st.markdown(תשובה)
+
+            # שומר ב-session_state
+            st.session_state["chat_history"].append((שאלה, תשובה))
 
 # ========================
 # מצב: סיכום מסמך
