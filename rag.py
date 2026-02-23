@@ -248,11 +248,16 @@ def delete_source(source_name: str) -> int:
     return len(מזהים)
 
 
-def search_and_answer(question: str, history: list[tuple[str, str]] | None = None) -> str:
+def search_and_answer(
+    question: str,
+    history: list[tuple[str, str]] | None = None,
+    filter_source: str | None = None,
+) -> str:
     """
-    מתרגם את השאלה לאנגלית, מחפש ב-ChromaDB את 10 החלקים הרלוונטיים,
+    מתרגם את השאלה לאנגלית, מחפש ב-ChromaDB את 15 החלקים הרלוונטיים,
     ושולח אותם יחד עם השאלה המקורית והיסטוריית השיחה ל-Anthropic API.
     history: רשימה של (שאלה, תשובה) מהסבבים הקודמים.
+    filter_source: אם מועבר, מחפש רק בתוך הקובץ הזה.
     """
     לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
@@ -275,8 +280,13 @@ def search_and_answer(question: str, history: list[tuple[str, str]] | None = Non
     לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
 
-    # מחפש את 10 החלקים הדומים ביותר לשאלה
-    תוצאות = אוסף.query(query_texts=[שאלה_באנגלית], n_results=10)
+    # מחפש את 15 החלקים הדומים ביותר לשאלה, עם סינון אופציונלי לפי קובץ
+    where_filter = {"source": filter_source} if filter_source else None
+    תוצאות = אוסף.query(
+        query_texts=[שאלה_באנגלית],
+        n_results=15,
+        where=where_filter,
+    )
     חלקים_רלוונטיים = תוצאות["documents"][0]  # רשימת טקסטים
     מקורות = [m["source"] for m in תוצאות["metadatas"][0]]
 

@@ -188,11 +188,27 @@ if מצב == "❓ שאלה חופשית":
     if "chat_history" not in st.session_state:
         st.session_state["chat_history"] = []  # רשימה של (שאלה, תשובה)
 
-    # כפתור ניקוי היסטוריה
-    if st.session_state["chat_history"]:
-        if st.button("🗑️ נקה היסטוריה", key="clear_history"):
-            st.session_state["chat_history"] = []
-            st.rerun()
+    # סינון לפי מסמך ספציפי + כפתור ניקוי היסטוריה
+    col_filter, col_clear = st.columns([3, 1])
+    with col_filter:
+        אפשרויות_סינון = ["🌐 כל המסמכים"] + מקורות
+        בחירת_סינון = st.selectbox(
+            "חפש בתוך:",
+            אפשרויות_סינון,
+            key="source_filter",
+            label_visibility="collapsed",
+        )
+    with col_clear:
+        if st.session_state["chat_history"]:
+            if st.button("🗑️ נקה", key="clear_history", use_container_width=True):
+                st.session_state["chat_history"] = []
+                st.rerun()
+
+    # ממיר את הבחירה לפרמטר סינון (None = כל המסמכים)
+    סינון_פעיל = None if בחירת_סינון.startswith("🌐") else בחירת_סינון
+
+    if סינון_פעיל:
+        st.caption(f"🔍 מחפש רק ב: **{סינון_פעיל}**")
 
     # הצגת ההיסטוריה כבועות שיחה
     for שאלה_קודמת, תשובה_קודמת in st.session_state["chat_history"]:
@@ -212,12 +228,13 @@ if מצב == "❓ שאלה חופשית":
             with st.chat_message("user"):
                 st.markdown(שאלה)
 
-            # שולח לClaude עם כל ההיסטוריה
+            # שולח לClaude עם כל ההיסטוריה + סינון קובץ
             with st.chat_message("assistant"):
                 with st.spinner("מחפש תשובה..."):
                     תשובה = search_and_answer(
                         שאלה,
                         history=st.session_state["chat_history"],
+                        filter_source=סינון_פעיל,
                     )
                 st.markdown(תשובה)
 
