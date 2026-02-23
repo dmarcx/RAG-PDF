@@ -1,4 +1,5 @@
 import os
+import anthropic
 import chromadb
 import fitz  # PyMuPDF
 
@@ -105,6 +106,47 @@ def save_to_chromadb(chunks: list[dict]) -> None:
     אוסף.add(ids=מזהים, documents=מסמכים, metadatas=מטא_דאטה)
 
 
+def search_and_answer(question: str) -> str:
+    """
+    מחפש ב-ChromaDB את 3 החלקים הרלוונטיים ביותר לשאלה,
+    ושולח אותם יחד עם השאלה ל-Anthropic API לקבלת תשובה.
+    """
+    # פותח את מסד הנתונים הוקטורי הקיים
+    לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
+    אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
+
+    # מחפש את 3 החלקים הדומים ביותר לשאלה
+    תוצאות = אוסף.query(query_texts=[question], n_results=3)
+    חלקים_רלוונטיים = תוצאות["documents"][0]  # רשימת טקסטים
+    מקורות = [m["source"] for m in תוצאות["metadatas"][0]]
+
+    # בונה הקשר מהחלקים שנמצאו
+    הקשר = "\n\n---\n\n".join(
+        f"[מקור: {מקור}]\n{טקסט}"
+        for מקור, טקסט in zip(מקורות, חלקים_רלוונטיים)
+    )
+
+    # בונה את הפרומפט לשליחה למודל
+    פרומפט = f"""אתה עוזר שעונה על שאלות בהתבסס על מסמכי PDF.
+ענה בשפה שבה נשאלת השאלה (עברית או אנגלית).
+אם התשובה לא נמצאת בהקשר, אמור זאת בפירוש.
+
+הקשר מהמסמכים:
+{הקשר}
+
+שאלה: {question}"""
+
+    # קורא ל-Anthropic API עם הפרומפט
+    לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    תגובה = לקוח_anthropic.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": פרומפט}],
+    )
+
+    return תגובה.content[0].text
+
+
 def main():
     """
     פונקציה ראשית:
@@ -137,6 +179,23 @@ def main():
     print(f"קבצים שנטענו: {len(קבצים)}")
     print(f"סך הכל חלקים (chunks): {len(כל_החלקים)}")
     print("הנתונים נשמרו בהצלחה ב-ChromaDB (תיקיית chroma_db).")
+
+    # לולאת שאלות ותשובות – ממשיכה עד שהמשתמש מקליד יציאה/exit
+    print("\n=== מוכן לשאלות! (כתוב 'יציאה' או 'exit' לסיום) ===")
+    while True:
+        שאלה = input("\nשאלה: ").strip()
+
+        # בודק אם המשתמש רוצה לצאת
+        if שאלה.lower() in ("יציאה", "exit"):
+            print("להתראות!")
+            break
+
+        if not שאלה:
+            continue
+
+        # מחפש ומקבל תשובה מהמודל
+        תשובה = search_and_answer(שאלה)
+        print(f"\nתשובה:\n{תשובה}")
 
 
 if __name__ == "__main__":
