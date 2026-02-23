@@ -20,6 +20,88 @@ def load_pdf(file_path: str) -> str:
     return "\n".join(טקסט_מלא)
 
 
+def load_pdf_pages(file_path: str):
+    """גנרטור שמחזיר טקסט עמוד-עמוד – חוסך זיכרון לקבצים ענקיים."""
+    doc = fitz.open(file_path)
+    for עמוד in doc:
+        yield עמוד.get_text()
+    doc.close()
+
+
+def count_pdf_pages(file_path: str) -> int:
+    """מחזיר את מספר העמודים בקובץ PDF."""
+    doc = fitz.open(file_path)
+    n = doc.page_count
+    doc.close()
+    return n
+
+
+def save_to_chromadb_batch(chunks: list[dict]) -> None:
+    """שומר אצווה של chunks ל-ChromaDB – גרסה יעילה לקבצים גדולים."""
+    if not chunks:
+        return
+
+    לקוח = chromadb.PersistentClient(path="chroma_db")
+    אוסף = לקוח.get_or_create_collection(name="pdf_collection")
+
+    מזהים  = [f"{c['source']}__chunk_{c['chunk_index']}" for c in chunks]
+    מסמכים = [c["text"] for c in chunks]
+    מטא    = [{"source": c["source"], "chunk_index": c["chunk_index"]} for c in chunks]
+
+    אוסף.add(ids=מזהים, documents=מסמכים, metadatas=מטא)
+
+
+def process_large_pdf(
+    file_path: str,
+    source_name: str,
+    chunk_size: int = 500,
+    overlap: int = 50,
+    batch_size: int = 200,
+    progress_callback=None,
+) -> int:
+    """
+    מעבד קובץ PDF גדול עמוד-עמוד ושומר ל-ChromaDB באצוות.
+    מחזיר את מספר ה-chunks שנוצרו.
+    progress_callback(page, total) – אם מועבר, נקרא אחרי כל עמוד.
+    """
+    סה_כ_עמודים = count_pdf_pages(file_path)
+    מאגר_טקסט   = ""      # מאגר עמודים לפני הפיצול
+    כל_החלקים  = []       # אצווה נוכחית לשמירה
+    אינדקס_גלובלי = 0      # מספר chunk רץ
+    סה_כ_chunks  = 0
+
+    for מספר_עמוד, טקסט_עמוד in enumerate(load_pdf_pages(file_path), start=1):
+        מאגר_טקסט += טקסט_עמוד + "\n"
+
+        # כל 10 עמודים – מפצלים ומוסיפים לאצווה
+        if מספר_עמוד % 10 == 0 or מספר_עמוד == סה_כ_עמודים:
+            חלקים = split_text(מאגר_טקסט, source_name, chunk_size, overlap)
+
+            # מתקן את האינדקסים לרצף גלובלי
+            for חלק in חלקים:
+                חלק["chunk_index"] = אינדקס_גלובלי
+                אינדקס_גלובלי += 1
+
+            כל_החלקים.extend(חלקים)
+            מאגר_טקסט = ""  # מנקה את המאגר לשמירת זיכרון
+
+            # כשמצטברים מספיק chunks – שומרים ומנקים
+            if len(כל_החלקים) >= batch_size:
+                save_to_chromadb_batch(כל_החלקים)
+                סה_כ_chunks += len(כל_החלקים)
+                כל_החלקים = []
+
+        if progress_callback:
+            progress_callback(מספר_עמוד, סה_כ_עמודים)
+
+    # שומרים את השארית
+    if כל_החלקים:
+        save_to_chromadb_batch(כל_החלקים)
+        סה_כ_chunks += len(כל_החלקים)
+
+    return סה_כ_chunks
+
+
 def load_multiple_pdfs(folder_path: str) -> list[dict]:
     """
     קורא את כל קבצי ה-PDF בתיקייה.
@@ -310,22 +392,27 @@ def main():
     for קובץ in קבצים_קיימים:
         print(f"דולג (כבר קיים): {קובץ['source']}")
 
-    כל_החלקים_חדשים = []
+    סה_כ_chunks_חדשים = 0
 
-    # מעבד ושומר רק קבצים חדשים
+    # מעבד כל קובץ חדש בנפרד עמוד-עמוד לחיסכון בזיכרון
     for קובץ in קבצים_חדשים:
-        חלקים = split_text(קובץ["text"], קובץ["source"])
-        כל_החלקים_חדשים.extend(חלקים)
+        נתיב = os.path.join(תיקיית_pdf, קובץ["source"])
+        עמודים = count_pdf_pages(נתיב)
+        print(f"\nמעבד: {קובץ['source']} ({עמודים} עמודים)")
 
-    if כל_החלקים_חדשים:
-        print("שומר קבצים חדשים ב-ChromaDB...")
-        save_to_chromadb(כל_החלקים_חדשים)
+        def הדפסת_התקדמות(עמוד, סה_כ):
+            if עמוד % 20 == 0 or עמוד == סה_כ:
+                print(f"  עמוד {עמוד}/{סה_כ}", end="\r", flush=True)
+
+        chunks = process_large_pdf(נתיב, קובץ["source"], progress_callback=הדפסת_התקדמות)
+        סה_כ_chunks_חדשים += chunks
+        print(f"  ✓ {קובץ['source']}: {chunks} חלקים נשמרו")
 
     # הדפסת סיכום
     print(f"\n--- סיכום ---")
     print(f"קבצים חדשים שנטענו: {len(קבצים_חדשים)}")
     print(f"קבצים שכבר היו קיימים: {len(קבצים_קיימים)}")
-    print(f"חלקים חדשים שנוספו: {len(כל_החלקים_חדשים)}")
+    print(f"חלקים חדשים שנוספו: {סה_כ_chunks_חדשים}")
 
     # הצגת מקורות קיימים לפני השאלות
     list_sources()

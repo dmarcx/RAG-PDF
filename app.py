@@ -1,0 +1,214 @@
+import os
+import streamlit as st
+from dotenv import load_dotenv
+
+# טוען משתני סביבה מ-.env
+load_dotenv()
+
+# מייבא את כל הפונקציות הקיימות מ-rag.py
+from rag import (
+    load_pdf,
+    split_text,
+    save_to_chromadb,
+    get_existing_sources,
+    list_sources,
+    search_and_answer,
+    summarize_file,
+    count_standards,
+    count_pdf_pages,
+    process_large_pdf,
+)
+
+# ========================
+# הגדרות בסיסיות של הדף
+# ========================
+st.set_page_config(
+    page_title="RAG-PDF",
+    page_icon="📄",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ========================
+# כותרת ראשית
+# ========================
+st.title("📄 RAG-PDF – שאל שאלות על המסמכים שלך")
+st.markdown("---")
+
+# ========================
+# סרגל צד – מקורות קיימים + העלאת קבצים
+# ========================
+with st.sidebar:
+    st.header("📂 מסמכים טעונים")
+
+    # שולף ומציג את הקבצים הקיימים ב-ChromaDB
+    מקורות = sorted(get_existing_sources())
+    if מקורות:
+        for שם in מקורות:
+            st.markdown(f"✅ {שם}")
+    else:
+        st.info("אין מסמכים טעונים עדיין.")
+
+    st.markdown("---")
+
+    # ========================
+    # העלאת קבצי PDF חדשים
+    # ========================
+    st.header("⬆️ העלה מסמך חדש")
+    קבצים_שהועלו = st.file_uploader(
+        "בחר קובץ PDF",
+        type=["pdf"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+    )
+
+    if קבצים_שהועלו:
+        if st.button("📥 טען לתוך המערכת", use_container_width=True):
+            # מוודא שתיקיית pdfs קיימת
+            os.makedirs("pdfs", exist_ok=True)
+            מקורות_קיימים = get_existing_sources()
+            נוספו = 0
+
+            for קובץ in קבצים_שהועלו:
+                if קובץ.name in מקורות_קיימים:
+                    st.warning(f"כבר קיים: {קובץ.name}")
+                    continue
+
+                # שמירה לדיסק בתיקיית pdfs
+                os.makedirs("pdfs", exist_ok=True)
+                נתיב = os.path.join("pdfs", קובץ.name)
+                with open(נתיב, "wb") as f:
+                    f.write(קובץ.getbuffer())
+
+                # מציג שורת סטטוס + progress bar לקבצים גדולים
+                st.markdown(f"**מעבד:** {קובץ.name}")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                def progress_callback(עמוד, סה_כ, _bar=progress_bar, _txt=status_text):
+                    _bar.progress(עמוד / סה_כ)
+                    _txt.caption(f"עמוד {עמוד} / {סה_כ}")
+
+                chunks = process_large_pdf(נתיב, קובץ.name, progress_callback=progress_callback)
+                progress_bar.progress(1.0)
+                status_text.caption(f"✅ נשמרו {chunks} חלקים")
+                נוספו += 1
+
+            if נוספו > 0:
+                st.success(f"נוספו {נוספו} קובץ/קבצים בהצלחה!")
+                st.rerun()
+
+    st.markdown("---")
+
+    # ========================
+    # סריקת תיקיית pdfs קיימת
+    # ========================
+    st.header("🔍 סרוק תיקיית pdfs")
+    st.caption("מאנדקס קבצים שהועתקו ידנית לתיקייה")
+
+    if st.button("🔄 סרוק ואנדקס קבצים חדשים", use_container_width=True):
+        תיקיית_pdf = "pdfs"
+        if not os.path.isdir(תיקיית_pdf):
+            st.error("תיקיית pdfs לא קיימת.")
+        else:
+            # מוצא קבצים בתיקייה שעוד לא ב-ChromaDB
+            מקורות_קיימים = get_existing_sources()
+            כל_קבצי_pdf = [
+                ש for ש in os.listdir(תיקיית_pdf)
+                if ש.lower().endswith(".pdf")
+            ]
+            קבצים_חדשים = [ש for ש in כל_קבצי_pdf if ש not in מקורות_קיימים]
+
+            if not קבצים_חדשים:
+                st.info("כל הקבצים בתיקייה כבר מאונדקסים.")
+            else:
+                st.info(f"נמצאו {len(קבצים_חדשים)} קבצים חדשים לאינדוקס.")
+                נוספו = 0
+                for שם_קובץ in קבצים_חדשים:
+                    נתיב = os.path.join(תיקיית_pdf, שם_קובץ)
+                    st.markdown(f"**מעבד:** {שם_קובץ}")
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+
+                    def progress_callback(עמוד, סה_כ, _bar=progress_bar, _txt=status_text):
+                        _bar.progress(עמוד / סה_כ)
+                        _txt.caption(f"עמוד {עמוד} / {סה_כ}")
+
+                    chunks = process_large_pdf(נתיב, שם_קובץ, progress_callback=progress_callback)
+                    progress_bar.progress(1.0)
+                    status_text.caption(f"✅ {chunks} חלקים")
+                    נוספו += 1
+
+                st.success(f"אונדקסו {נוספו} קבצים בהצלחה!")
+                st.rerun()
+
+# ========================
+# אזור ראשי – שאלות ותשובות
+# ========================
+
+# בחירת מצב פעולה
+st.subheader("🔧 בחר מצב")
+מצב = st.radio(
+    "מצב פעולה:",
+    options=["❓ שאלה חופשית", "📋 סכם מסמך", "🔢 ספור תקנים"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+st.markdown("---")
+
+# ========================
+# מצב: שאלה חופשית
+# ========================
+if מצב == "❓ שאלה חופשית":
+    st.subheader("❓ שאל שאלה")
+    שאלה = st.text_area(
+        "הקלד את שאלתך (עברית או אנגלית):",
+        height=100,
+        placeholder="לדוגמה: מהם דרישות ההארקה לפי התקן הישראלי?",
+    )
+
+    if st.button("🔍 חפש תשובה", type="primary", use_container_width=False):
+        if not שאלה.strip():
+            st.warning("נא להקליד שאלה.")
+        elif not get_existing_sources():
+            st.error("אין מסמכים טעונים. העלה PDF תחילה.")
+        else:
+            with st.spinner("מחפש תשובה..."):
+                תשובה = search_and_answer(שאלה)
+            st.markdown("### 💬 תשובה")
+            st.markdown(תשובה)
+
+# ========================
+# מצב: סיכום מסמך
+# ========================
+elif מצב == "📋 סכם מסמך":
+    st.subheader("📋 סכם מסמך")
+
+    if not מקורות:
+        st.error("אין מסמכים טעונים. העלה PDF תחילה.")
+    else:
+        קובץ_נבחר = st.selectbox("בחר מסמך לסיכום:", מקורות)
+
+        if st.button("✍️ סכם", type="primary", use_container_width=False):
+            with st.spinner(f"מסכם את {קובץ_נבחר}..."):
+                סיכום = summarize_file(קובץ_נבחר)
+            st.markdown("### 📄 סיכום")
+            st.markdown(סיכום)
+
+# ========================
+# מצב: ספירת תקנים
+# ========================
+elif מצב == "🔢 ספור תקנים":
+    st.subheader("🔢 ספור תקנים במסמך")
+
+    if not מקורות:
+        st.error("אין מסמכים טעונים. העלה PDF תחילה.")
+    else:
+        קובץ_נבחר = st.selectbox("בחר מסמך לספירת תקנים:", מקורות)
+
+        if st.button("🔢 ספור", type="primary", use_container_width=False):
+            with st.spinner(f"סופר תקנים ב-{קובץ_נבחר}..."):
+                תוצאה = count_standards(קובץ_נבחר)
+            st.markdown("### 📊 תוצאה")
+            st.markdown(f"```\n{תוצאה}\n```")
