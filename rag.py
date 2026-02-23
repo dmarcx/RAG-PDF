@@ -78,21 +78,14 @@ def split_text(text: str, source_name: str, chunk_size: int = 500, overlap: int 
 
 def save_to_chromadb(chunks: list[dict]) -> None:
     """
-    שומר את כל החלקים במסד הנתונים הוקטורי ChromaDB.
-    האוסף נקרא 'pdf_collection'.
-    כל רשומה מכילה:
-      - id: מזהה ייחודי (שם מקור + אינדקס)
-      - document: תוכן הטקסט
-      - metadata: שם המקור ומספר החלק
+    שומר חלקים ל-ChromaDB באוסף 'pdf_collection'.
+    מניח שהחלקים שמועברים הם רק קבצים חדשים (לא קיימים).
     """
-    # יוצר לקוח ChromaDB שישמור את הנתונים בתיקייה מקומית
+    # פותח את מסד הנתונים המקומי
     לקוח = chromadb.PersistentClient(path="chroma_db")
 
-    # מוחק את האוסף הקיים (אם יש) כדי למנוע כפילויות בכל הרצה
-    לקוח.delete_collection(name="pdf_collection")
-
-    # יוצר אוסף חדש ונקי
-    אוסף = לקוח.create_collection(name="pdf_collection")
+    # מקבל או יוצר את האוסף מבלי למחוק נתונים קיימים
+    אוסף = לקוח.get_or_create_collection(name="pdf_collection")
 
     # מכין את הנתונים להכנסה מרוכזת
     מזהים = []
@@ -109,6 +102,47 @@ def save_to_chromadb(chunks: list[dict]) -> None:
     אוסף.add(ids=מזהים, documents=מסמכים, metadatas=מטא_דאטה)
 
 
+def get_existing_sources() -> set:
+    """
+    מחזיר קבוצה של שמות הקבצים שכבר נידקסו ב-ChromaDB.
+    משתמשת במטאדאטה של הרשומות הקיימות.
+    """
+    לקוח = chromadb.PersistentClient(path="chroma_db")
+    אוסף = לקוח.get_or_create_collection(name="pdf_collection")
+
+    # משיג את כל המטאדאטה הקיימת במסד הנתונים
+    תוצאות = אוסף.get(include=["metadatas"])
+
+    # אוסף שמות ייחודיים לקבוצה
+    שמות_קיימים = {m["source"] for m in תוצאות["metadatas"]}
+    return שמות_קיימים
+
+
+def list_sources() -> None:
+    """
+    מדפיסה כמה chunks יש מכל קובץ ב-ChromaDB.
+    שימושית לבדיקה שכל המסמכים נטענו בהצלחה.
+    """
+    לקוח = chromadb.PersistentClient(path="chroma_db")
+    אוסף = לקוח.get_or_create_collection(name="pdf_collection")
+
+    # שולף את כל המטאדאטה מהאוסף
+    תוצאות = אוסף.get(include=["metadatas"])
+
+    # סופר chunks לפי קובץ
+    ספירת_חלקים: dict[str, int] = {}
+    for מטא in תוצאות["metadatas"]:
+        שם = מטא["source"]
+        ספירת_חלקים[שם] = ספירת_חלקים.get(שם, 0) + 1
+
+    print("\n--- מקורות ב-ChromaDB ---")
+    if not ספירת_חלקים:
+        print("אין מסמכים שמורים עדיין.")
+    else:
+        for שם_קובץ, מספר_חלקים in sorted(ספירת_חלקים.items()):
+            print(f"  {שם_קובץ}: {מספר_חלקים} חלקים")
+
+
 def search_and_answer(question: str) -> str:
     """
     מחפש ב-ChromaDB את 3 החלקים הרלוונטיים ביותר לשאלה,
@@ -119,7 +153,7 @@ def search_and_answer(question: str) -> str:
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
 
     # מחפש את 3 החלקים הדומים ביותר לשאלה
-    תוצאות = אוסף.query(query_texts=[question], n_results=3)
+    תוצאות = אוסף.query(query_texts=[question], n_results=6)
     חלקים_רלוונטיים = תוצאות["documents"][0]  # רשימת טקסטים
     מקורות = [m["source"] for m in תוצאות["metadatas"][0]]
 
@@ -132,6 +166,7 @@ def search_and_answer(question: str) -> str:
     # בונה את הפרומפט לשליחה למודל
     פרומפט = f"""אתה עוזר שעונה על שאלות בהתבסס על מסמכי PDF.
 ענה בשפה שבה נשאלת השאלה (עברית או אנגלית).
+ענה רק על בסיס המידע הנתון. ציין מאיזה קובץ המידע מגיע.
 אם התשובה לא נמצאת בהקשר, אמור זאת בפירוש.
 
 הקשר מהמסמכים:
@@ -150,6 +185,48 @@ def search_and_answer(question: str) -> str:
     return תגובה.content[0].text
 
 
+def summarize_file(source_name: str) -> str:
+    """
+    שולף את כל ה-chunks של קובץ ספציפי מ-ChromaDB
+    ושולח אותם ל-Claude לסיכום מקיף.
+    """
+    לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
+    אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
+
+    # שולף את כל הרשומות ששייכות לקובץ המבוקש
+    תוצאות = אוסף.get(
+        where={"source": source_name},
+        include=["documents", "metadatas"]
+    )
+
+    חלקים = תוצאות["documents"]
+
+    if not חלקים:
+        return f"לא נמצאו נתונים לקובץ: {source_name}"
+
+    # מחבר את כל החלקים לטקסט אחד
+    טקסט_מלא = "\n\n".join(חלקים)
+
+    פרומפט = f"""סכם את המסמך הבא בצורה מקיפת ומסודרת.
+ציין את הנקודות העיקריות, נושאי המסמך, וכל מידע חשוב אחר.
+ענה בעברית.
+
+שם המסמך: {source_name}
+
+תוכן המסמך:
+{טקסט_מלא}"""
+
+    # שולח ל-Claude את כל התוכן
+    לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    תגובה = לקוח_anthropic.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2048,
+        messages=[{"role": "user", "content": פרומפט}],
+    )
+
+    return תגובה.content[0].text
+
+
 def main():
     """
     פונקציה ראשית:
@@ -159,32 +236,46 @@ def main():
     """
     תיקיית_pdf = "pdfs"
 
-    # טעינת כל קבצי ה-PDF מהתיקייה
-    קבצים = load_multiple_pdfs(תיקיית_pdf)
+    # בדיקה אילו קבצים כבר קיימים ב-ChromaDB
+    מקורות_קיימים = get_existing_sources()
 
-    if not קבצים:
+    # טעינת כל קבצי ה-PDF מהתיקייה
+    כל_קבצי_pdf = load_multiple_pdfs(תיקיית_pdf)
+
+    if not כל_קבצי_pdf:
         print("לא נמצאו קבצי PDF בתיקייה.")
         return
 
-    כל_החלקים = []
+    # מסנן רק קבצים חדשים שעוד לא נוספו ל-ChromaDB
+    קבצים_חדשים = [ק for ק in כל_קבצי_pdf if ק["source"] not in מקורות_קיימים]
+    קבצים_קיימים = [ק for ק in כל_קבצי_pdf if ק["source"] in מקורות_קיימים]
 
-    # פיצול הטקסט של כל קובץ לחלקים
-    for קובץ in קבצים:
+    # מדפיס סטטוס קבצים קיימים
+    for קובץ in קבצים_קיימים:
+        print(f"דולג (כבר קיים): {קובץ['source']}")
+
+    כל_החלקים_חדשים = []
+
+    # מעבד ושומר רק קבצים חדשים
+    for קובץ in קבצים_חדשים:
         חלקים = split_text(קובץ["text"], קובץ["source"])
-        כל_החלקים.extend(חלקים)
+        כל_החלקים_חדשים.extend(חלקים)
 
-    # שמירת כל החלקים ב-ChromaDB
-    print("שומר ב-ChromaDB...")
-    save_to_chromadb(כל_החלקים)
+    if כל_החלקים_חדשים:
+        print("שומר קבצים חדשים ב-ChromaDB...")
+        save_to_chromadb(כל_החלקים_חדשים)
 
-    # הדפסת סטטיסטיקות
+    # הדפסת סיכום
     print(f"\n--- סיכום ---")
-    print(f"קבצים שנטענו: {len(קבצים)}")
-    print(f"סך הכל חלקים (chunks): {len(כל_החלקים)}")
-    print("הנתונים נשמרו בהצלחה ב-ChromaDB (תיקיית chroma_db).")
+    print(f"קבצים חדשים שנטענו: {len(קבצים_חדשים)}")
+    print(f"קבצים שכבר היו קיימים: {len(קבצים_קיימים)}")
+    print(f"חלקים חדשים שנוספו: {len(כל_החלקים_חדשים)}")
 
-    # לולאת שאלות ותשובות – ממשיכה עד שהמשתמש מקליד יציאה/exit
-    print("\n=== מוכן לשאלות! (כתוב 'יציאה' או 'exit' לסיום) ===")
+    # הצגת מקורות קיימים לפני השאלות
+    list_sources()
+
+    # לולאת שאלות ותשובות – תומך גם בפקודת סיכום
+    print("\n=== מוכן לשאלות! (כתוב 'יציאה' או 'exit' לסיום, סיכום: כתוב 'סכם:') ===")
     while True:
         שאלה = input("\nשאלה: ").strip()
 
@@ -196,9 +287,33 @@ def main():
         if not שאלה:
             continue
 
-        # מחפש ומקבל תשובה מהמודל
-        תשובה = search_and_answer(שאלה)
-        print(f"\nתשובה:\n{תשובה}")
+        # מצב סיכום – המשתמש כתב "סכם:"
+        if שאלה.startswith("סכם:"):
+            # מציג את הקבצים הזמינים לסיכום
+            מקורות_קיימים_רשימה = sorted(get_existing_sources())
+            if not מקורות_קיימים_רשימה:
+                print("אין מסמכים זמינים.")
+                continue
+            print("קבצים זמינים:")
+            for י, שם in enumerate(מקורות_קיימים_רשימה, start=1):
+                print(f"  {י}. {שם}")
+            בחירה = input("בחר מספר קובץ: ").strip()
+            # מאפשר בחירה לפי מספר או שם
+            if בחירה.isdigit() and 1 <= int(בחירה) <= len(מקורות_קיימים_רשימה):
+                שם_קובץ = מקורות_קיימים_רשימה[int(בחירה) - 1]
+            elif בחירה in מקורות_קיימים_רשימה:
+                שם_קובץ = בחירה
+            else:
+                print("בחירה לא תקינה.")
+                continue
+            print(f"\nמסכם את: {שם_קובץ}...")
+            תשובה = summarize_file(שם_קובץ)
+            print(f"\nסיכום:\n{תשובה}")
+
+        else:
+            # מצב רגיל – חיפוש סמנטי ותשובה
+            תשובה = search_and_answer(שאלה)
+            print(f"\nתשובה:\n{תשובה}")
 
 
 if __name__ == "__main__":
