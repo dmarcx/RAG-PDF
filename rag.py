@@ -88,8 +88,11 @@ def save_to_chromadb(chunks: list[dict]) -> None:
     # יוצר לקוח ChromaDB שישמור את הנתונים בתיקייה מקומית
     לקוח = chromadb.PersistentClient(path="chroma_db")
 
-    # מקבל או יוצר את האוסף
-    אוסף = לקוח.get_or_create_collection(name="pdf_collection")
+    # מוחק את האוסף הקיים (אם יש) כדי למנוע כפילויות בכל הרצה
+    לקוח.delete_collection(name="pdf_collection")
+
+    # יוצר אוסף חדש ונקי
+    אוסף = לקוח.create_collection(name="pdf_collection")
 
     # מכין את הנתונים להכנסה מרוכזת
     מזהים = []
