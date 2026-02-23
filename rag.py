@@ -129,7 +129,7 @@ def load_multiple_pdfs(folder_path: str) -> list[dict]:
     return תוצאות
 
 
-def split_text(text: str, source_name: str, chunk_size: int = 500, overlap: int = 50) -> list[dict]:
+def split_text(text: str, source_name: str, chunk_size: int = 1500, overlap: int = 200) -> list[dict]:
     """
     מפצל טקסט לחלקים (chunks) עם חפיפה בין חלקים סמוכים.
     כל חלק מוחזר כמילון עם:
@@ -298,10 +298,11 @@ def search_and_answer(
 
     # --- שלב 3: בניית רשימת ההודעות כולל היסטוריית השיחה ---
     system_prompt = (
-        "STRICT RULE: Answer ONLY based on the provided context. "
-        "If the information is not explicitly stated in the context, say exactly: "
-        "'המידע הזה לא נמצא במסמכים' - do NOT extrapolate, estimate, or guess.\n\n"
-        "אתה עוזר שעונה על שאלות בהתבסס על מסמכי PDF.\n"
+        "You are a strict document assistant.\n"
+        "ABSOLUTE RULES:\n"
+        "1. If information is NOT in the provided context - say ONLY: 'המידע לא נמצא בקטעים שנשלפו'\n"
+        "2. NEVER guess, estimate, or use prior knowledge\n"
+        "3. NEVER apologize or explain - just state clearly what was found or not found\n\n"
         "ענה בשפה שבה נשאלת השאלה המקורית (עברית או אנגלית).\n"
         "ציין מאיזה קובץ המידע מגיע.\n\n"
         f"הקשר מהמסמכים:\n{הקשר}"
