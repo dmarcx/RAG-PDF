@@ -1,4 +1,5 @@
 import os
+import chromadb
 import fitz  # PyMuPDF
 
 
@@ -74,6 +75,36 @@ def split_text(text: str, source_name: str, chunk_size: int = 500, overlap: int 
     return חלקים
 
 
+def save_to_chromadb(chunks: list[dict]) -> None:
+    """
+    שומר את כל החלקים במסד הנתונים הוקטורי ChromaDB.
+    האוסף נקרא 'pdf_collection'.
+    כל רשומה מכילה:
+      - id: מזהה ייחודי (שם מקור + אינדקס)
+      - document: תוכן הטקסט
+      - metadata: שם המקור ומספר החלק
+    """
+    # יוצר לקוח ChromaDB שישמור את הנתונים בתיקייה מקומית
+    לקוח = chromadb.PersistentClient(path="chroma_db")
+
+    # מקבל או יוצר את האוסף
+    אוסף = לקוח.get_or_create_collection(name="pdf_collection")
+
+    # מכין את הנתונים להכנסה מרוכזת
+    מזהים = []
+    מסמכים = []
+    מטא_דאטה = []
+
+    for חלק in chunks:
+        מזהה = f"{חלק['source']}__chunk_{חלק['chunk_index']}"
+        מזהים.append(מזהה)
+        מסמכים.append(חלק["text"])
+        מטא_דאטה.append({"source": חלק["source"], "chunk_index": חלק["chunk_index"]})
+
+    # שומר את כל החלקים בבת אחת
+    אוסף.add(ids=מזהים, documents=מסמכים, metadatas=מטא_דאטה)
+
+
 def main():
     """
     פונקציה ראשית:
@@ -97,10 +128,15 @@ def main():
         חלקים = split_text(קובץ["text"], קובץ["source"])
         כל_החלקים.extend(חלקים)
 
+    # שמירת כל החלקים ב-ChromaDB
+    print("שומר ב-ChromaDB...")
+    save_to_chromadb(כל_החלקים)
+
     # הדפסת סטטיסטיקות
     print(f"\n--- סיכום ---")
     print(f"קבצים שנטענו: {len(קבצים)}")
     print(f"סך הכל חלקים (chunks): {len(כל_החלקים)}")
+    print("הנתונים נשמרו בהצלחה ב-ChromaDB (תיקיית chroma_db).")
 
 
 if __name__ == "__main__":
