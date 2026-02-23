@@ -17,6 +17,7 @@ from rag import (
     count_standards,
     count_pdf_pages,
     process_large_pdf,
+    delete_source,
 )
 
 # ========================
@@ -45,9 +46,28 @@ with st.sidebar:
     מקורות = sorted(get_existing_sources())
     if מקורות:
         for שם in מקורות:
-            st.markdown(f"✅ {שם}")
+            עמ1, עמ2 = st.columns([0.82, 0.18])
+            עמ1.markdown(f"✅ {שם}")
+            # כפתור מחיקה קטן ליד כל קובץ
+            if עמ2.button("🗑", key=f"del_{שם}", help=f"מחק את {שם}"):
+                st.session_state["pending_delete"] = שם
+
+        # אישור מחיקה – מוצג רק כשנלחץ כפתור מחיקה
+        if "pending_delete" in st.session_state:
+            שם_למחיקה = st.session_state["pending_delete"]
+            st.warning(f"למחוק את **{שם_למחיקה}** מה-DB?")
+            אישור, ביטול = st.columns(2)
+            if אישור.button("✅ כן, מחק", key="confirm_delete", use_container_width=True):
+                נמחקו = delete_source(שם_למחיקה)
+                del st.session_state["pending_delete"]
+                st.success(f"נמחקו {נמחקו} chunks של {שם_למחיקה}")
+                st.rerun()
+            if ביטול.button("❌ ביטול", key="cancel_delete", use_container_width=True):
+                del st.session_state["pending_delete"]
+                st.rerun()
     else:
         st.info("אין מסמכים טעונים עדיין.")
+
 
     st.markdown("---")
 

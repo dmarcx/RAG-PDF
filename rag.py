@@ -228,17 +228,54 @@ def list_sources() -> None:
             print(f"  {שם_קובץ}: {מספר_חלקים} חלקים")
 
 
+def delete_source(source_name: str) -> int:
+    """
+    מוחק את כל ה-chunks של קובץ ספציפי מ-ChromaDB.
+    מחזיר את מספר ה-chunks שנמחקו.
+    """
+    לקוח = chromadb.PersistentClient(path="chroma_db")
+    אוסף = לקוח.get_or_create_collection(name="pdf_collection")
+
+    # שולף את מזהי כל ה-chunks של הקובץ
+    תוצאות = אוסף.get(where={"source": source_name}, include=["metadatas"])
+    מזהים = תוצאות["ids"]
+
+    if not מזהים:
+        return 0
+
+    # מוחק את כולם בבת אחת
+    אוסף.delete(ids=מזהים)
+    return len(מזהים)
+
+
 def search_and_answer(question: str) -> str:
     """
-    מחפש ב-ChromaDB את 3 החלקים הרלוונטיים ביותר לשאלה,
-    ושולח אותם יחד עם השאלה ל-Anthropic API לקבלת תשובה.
+    מתרגם את השאלה לאנגלית, מחפש ב-ChromaDB את 10 החלקים הרלוונטיים,
+    ושולח אותם יחד עם השאלה המקורית ל-Anthropic API לקבלת תשובה.
     """
-    # פותח את מסד הנתונים הוקטורי הקיים
+    לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+    # --- שלב 1: תרגום השאלה לאנגלית לשיפור החיפוש הסמנטי ---
+    תגובת_תרגום = לקוח_anthropic.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=256,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Translate the following question to English. "
+                "Return ONLY the translated question, no explanation.\n\n"
+                f"Question: {question}"
+            ),
+        }],
+    )
+    שאלה_באנגלית = תגובת_תרגום.content[0].text.strip()
+
+    # --- שלב 2: חיפוש סמנטי עם השאלה האנגלית ---
     לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
 
-    # מחפש את 3 החלקים הדומים ביותר לשאלה
-    תוצאות = אוסף.query(query_texts=[question], n_results=6)
+    # מחפש את 10 החלקים הדומים ביותר לשאלה
+    תוצאות = אוסף.query(query_texts=[שאלה_באנגלית], n_results=10)
     חלקים_רלוונטיים = תוצאות["documents"][0]  # רשימת טקסטים
     מקורות = [m["source"] for m in תוצאות["metadatas"][0]]
 
@@ -248,19 +285,18 @@ def search_and_answer(question: str) -> str:
         for מקור, טקסט in zip(מקורות, חלקים_רלוונטיים)
     )
 
-    # בונה את הפרומפט לשליחה למודל
+    # --- שלב 3: תשובה על בסיס ההקשר שנמצא ---
     פרומפט = f"""אתה עוזר שעונה על שאלות בהתבסס על מסמכי PDF.
-ענה בשפה שבה נשאלת השאלה (עברית או אנגלית).
+ענה בשפה שבה נשאלת השאלה המקורית (עברית או אנגלית).
 ענה רק על בסיס המידע הנתון. ציין מאיזה קובץ המידע מגיע.
 אם התשובה לא נמצאת בהקשר, אמור זאת בפירוש.
 
 הקשר מהמסמכים:
 {הקשר}
 
-שאלה: {question}"""
+שאלה מקורית: {question}
+(תורגמה לחיפוש: {שאלה_באנגלית})"""
 
-    # קורא ל-Anthropic API עם הפרומפט
-    לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
     תגובה = לקוח_anthropic.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=1024,
