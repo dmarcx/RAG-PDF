@@ -288,10 +288,12 @@ def search_and_answer(question: str, history: list[tuple[str, str]] | None = Non
 
     # --- שלב 3: בניית רשימת ההודעות כולל היסטוריית השיחה ---
     system_prompt = (
+        "STRICT RULE: Answer ONLY based on the provided context. "
+        "If the information is not explicitly stated in the context, say exactly: "
+        "'המידע הזה לא נמצא במסמכים' - do NOT extrapolate, estimate, or guess.\n\n"
         "אתה עוזר שעונה על שאלות בהתבסס על מסמכי PDF.\n"
         "ענה בשפה שבה נשאלת השאלה המקורית (עברית או אנגלית).\n"
-        "ענה רק על בסיס המידע הנתון. ציין מאיזה קובץ המידע מגיע.\n"
-        "אם התשובה לא נמצאת בהקשר, אמור זאת בפירוש.\n\n"
+        "ציין מאיזה קובץ המידע מגיע.\n\n"
         f"הקשר מהמסמכים:\n{הקשר}"
     )
 
