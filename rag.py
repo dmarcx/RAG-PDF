@@ -2,6 +2,9 @@ import os
 import anthropic
 import chromadb
 import fitz  # PyMuPDF
+from dotenv import load_dotenv
+
+load_dotenv()  # טוען את משתני הסביבה מקובץ .env
 
 
 def load_pdf(file_path: str) -> str:
