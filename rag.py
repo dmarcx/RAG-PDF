@@ -3,6 +3,7 @@ import anthropic
 import chromadb
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
+from rank_bm25 import BM25Okapi
 
 load_dotenv()  # טוען את משתני הסביבה מקובץ .env
 
@@ -248,6 +249,84 @@ def delete_source(source_name: str) -> int:
     return len(מזהים)
 
 
+def hybrid_search(
+    question_en: str,
+    collection,
+    filter_source: str | None = None,
+    n_results: int = 15,
+    k_rrf: int = 60,
+) -> tuple[list[str], list[str]]:
+    """
+    מחזיר (texts, sources) באמצעות Hybrid Search:
+    - BM25 על כל ה-chunks
+    - חיפוש סמנטי ב-ChromaDB
+    - שילוב 50/50 באמצעות Reciprocal Rank Fusion
+    """
+    where_filter = {"source": filter_source} if filter_source else None
+
+    # שלף את כל ה-chunks הרלוונטיים
+    כל_הביאה = collection.get(
+        where=where_filter,
+        include=["documents", "metadatas"],
+    )
+    כל_טקסטים = כל_הביאה["documents"]
+    כל_מטא     = כל_הביאה["metadatas"]
+    כל_מזהים  = כל_הביאה["ids"]
+
+    if not כל_טקסטים:
+        return [], []
+
+    # מיפוי id -> (text, source)
+    מזהה_לתוכן = {
+        כל_מזהים[i]: (כל_טקסטים[i], כל_מטא[i]["source"])
+        for i in range(len(כל_מזהים))
+    }
+
+    # --- BM25 על כל ה-chunks ---
+    קורפוס_מטוקנן = [ט.lower().split() for ט in כל_טקסטים]
+    bm25 = BM25Okapi(קורפוס_מטוקנן)
+    שאילתא_מטוקננת = question_en.lower().split()
+    ציוני_bm25 = bm25.get_scores(שאילתא_מטוקננת)
+
+    # מיון BM25 לפי ציון יורד
+    סדר_bm25 = sorted(range(len(כל_טקסטים)), key=lambda i: ציוני_bm25[i], reverse=True)
+
+    # --- חיפוש סמנטי ב-ChromaDB ---
+    n_sem = min(n_results * 3, len(כל_טקסטים))
+    תוצאות_סם = collection.query(
+        query_texts=[question_en],
+        n_results=n_sem,
+        where=where_filter,
+    )
+    מזהיים_סם = תוצאות_סם["ids"][0]
+
+    # --- Reciprocal Rank Fusion (50/50) ---
+    ציוני_rrf: dict[str, float] = {}
+
+    # תרומת BM25 (50%)
+    for דרגה, אי in enumerate(סדר_bm25):
+        מזהה = כל_מזהים[אי]
+        ציוני_rrf[מזהה] = ציוני_rrf.get(מזהה, 0.0) + 0.5 / (דרגה + k_rrf)
+
+    # תרומת סמנטיקה (50%)
+    for דרגה, מזהה in enumerate(מזהיים_סם):
+        ציוני_rrf[מזהה] = ציוני_rrf.get(מזהה, 0.0) + 0.5 / (דרגה + k_rrf)
+
+    # מיון סופי ובחירת top n_results
+    מזהיים_מוויינים = sorted(ציוני_rrf, key=ציוני_rrf.__getitem__, reverse=True)[:n_results]
+
+    # בונה את רשימות התוצאות
+    טקסטים_סופיים = []
+    מקורות_סופיים = []
+    for מזהה in מזהיים_מוויינים:
+        if מזהה in מזהה_לתוכן:
+            טקסט, מקור = מזהה_לתוכן[מזהה]
+            טקסטים_סופיים.append(טקסט)
+            מקורות_סופיים.append(מקור)
+
+    return טקסטים_סופיים, מקורות_סופיים
+
+
 def search_and_answer(
     question: str,
     history: list[tuple[str, str]] | None = None,
@@ -276,19 +355,16 @@ def search_and_answer(
     )
     שאלה_באנגלית = תגובת_תרגום.content[0].text.strip()
 
-    # --- שלב 2: חיפוש סמנטי עם השאלה האנגלית ---
+    # --- שלב 2: Hybrid Search (סמנטיקה + BM25) עם השאלה האנגלית ---
     לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
 
-    # מחפש את 15 החלקים הדומים ביותר לשאלה, עם סינון אופציונלי לפי קובץ
-    where_filter = {"source": filter_source} if filter_source else None
-    תוצאות = אוסף.query(
-        query_texts=[שאלה_באנגלית],
+    חלקים_רלוונטיים, מקורות = hybrid_search(
+        question_en=שאלה_באנגלית,
+        collection=אוסף,
+        filter_source=filter_source,
         n_results=15,
-        where=where_filter,
     )
-    חלקים_רלוונטיים = תוצאות["documents"][0]  # רשימת טקסטים
-    מקורות = [m["source"] for m in תוצאות["metadatas"][0]]
 
     # בונה הקשר מהחלקים שנמצאו
     הקשר = "\n\n---\n\n".join(
