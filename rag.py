@@ -1,40 +1,73 @@
 import os
 import anthropic
 import chromadb
-import fitz  # PyMuPDF
+import pdfplumber
 from dotenv import load_dotenv
 from rank_bm25 import BM25Okapi
 
 load_dotenv()  # טוען את משתני הסביבה מקובץ .env
 
 
+def _page_to_text(page) -> str:
+    """
+    ממיר עמוד pdfplumber לטקסט:
+    - טבלאות: עמודה: ערך | עמודה: ערך
+    - שאר הטקסט: כרגיל
+    """
+    חלקים = []
+
+    # זיהוי טבלאות בענוד
+    טבלאות = page.extract_tables()
+    טקסט_העמוד = page.extract_text() or ""
+
+    if טבלאות:
+        # שמירת הטקסט הרגיל לפני הטבלאות
+        if טקסט_העמוד.strip():
+            חלקים.append(טקסט_העמוד)
+
+        for טבלאה in טבלאות:
+            שורות_מומרות = []
+
+            # השורה הראשונה היא הכותרת
+            כותרות = [תא if תא else "" for תא in (טבלאה[0] or [])]
+
+            for שורה in טבלאה[1:]:
+                # מדלג שורות ריקות
+                if not any(תא for תא in שורה if תא):
+                    continue
+                זוגות = [
+                    f"{(כותרות[i] or '').strip()}: {(תא or '').strip()}"
+                    for i, תא in enumerate(שורה)
+                    if i < len(כותרות)
+                ]
+                שורות_מומרות.append(" | ".join(זוגות))
+
+            if שורות_מומרות:
+                חלקים.append("[TABLE]\n" + "\n".join(שורות_מומרות))
+    else:
+        if טקסט_העמוד.strip():
+            חלקים.append(טקסט_העמוד)
+
+    return "\n".join(חלקים)
+
+
 def load_pdf(file_path: str) -> str:
-    """קורא קובץ PDF יחיד ומחזיר את כל הטקסט שלו כמחרוזת."""
-    doc = fitz.open(file_path)
-    טקסט_מלא = []
-
-    # עובר על כל עמוד בקובץ ומחלץ טקסט
-    for עמוד in doc:
-        טקסט_מלא.append(עמוד.get_text())
-
-    doc.close()
-    return "\n".join(טקסט_מלא)
+    """קורא קובץ PDF ומחזיר את כל הטקסט כמחרוזת, כולל טבלאות מומרות."""
+    with pdfplumber.open(file_path) as pdf:
+        return "\n".join(_page_to_text(page) for page in pdf.pages)
 
 
 def load_pdf_pages(file_path: str):
     """גנרטור שמחזיר טקסט עמוד-עמוד – חוסך זיכרון לקבצים ענקיים."""
-    doc = fitz.open(file_path)
-    for עמוד in doc:
-        yield עמוד.get_text()
-    doc.close()
+    with pdfplumber.open(file_path) as pdf:
+        for page in pdf.pages:
+            yield _page_to_text(page)
 
 
 def count_pdf_pages(file_path: str) -> int:
     """מחזיר את מספר העמודים בקובץ PDF."""
-    doc = fitz.open(file_path)
-    n = doc.page_count
-    doc.close()
-    return n
+    with pdfplumber.open(file_path) as pdf:
+        return len(pdf.pages)
 
 
 def save_to_chromadb_batch(chunks: list[dict]) -> None:
@@ -55,42 +88,34 @@ def save_to_chromadb_batch(chunks: list[dict]) -> None:
 def process_large_pdf(
     file_path: str,
     source_name: str,
-    chunk_size: int = 500,
-    overlap: int = 50,
+    chunk_size: int = 1500,   # שמור לתאימות אחורה, לא בשימוש יותר
+    overlap: int = 200,       # שמור לתאימות אחורה, לא בשימוש יותר
     batch_size: int = 200,
     progress_callback=None,
 ) -> int:
     """
-    מעבד קובץ PDF גדול עמוד-עמוד ושומר ל-ChromaDB באצוות.
-    מחזיר את מספר ה-chunks שנוצרו.
+    מעבד קובץ PDF עמוד-עמוד: כל עמוד = chunk אחד שלם.
+    שומר ל-ChromaDB באצוות. מחזיר את מספר ה-chunks שנוצרו.
     progress_callback(page, total) – אם מועבר, נקרא אחרי כל עמוד.
     """
     סה_כ_עמודים = count_pdf_pages(file_path)
-    מאגר_טקסט   = ""      # מאגר עמודים לפני הפיצול
-    כל_החלקים  = []       # אצווה נוכחית לשמירה
-    אינדקס_גלובלי = 0      # מספר chunk רץ
-    סה_כ_chunks  = 0
+    כל_החלקים: list[dict] = []
+    סה_כ_chunks = 0
 
     for מספר_עמוד, טקסט_עמוד in enumerate(load_pdf_pages(file_path), start=1):
-        מאגר_טקסט += טקסט_עמוד + "\n"
+        טקסט = טקסט_עמוד.strip()
+        if טקסט:  # מדלג עמודים ריקים לחלוטין
+            כל_החלקים.append({
+                "source": source_name,
+                "chunk_index": מספר_עמוד - 1,
+                "text": טקסט,
+            })
 
-        # כל 10 עמודים – מפצלים ומוסיפים לאצווה
-        if מספר_עמוד % 10 == 0 or מספר_עמוד == סה_כ_עמודים:
-            חלקים = split_text(מאגר_טקסט, source_name, chunk_size, overlap)
-
-            # מתקן את האינדקסים לרצף גלובלי
-            for חלק in חלקים:
-                חלק["chunk_index"] = אינדקס_גלובלי
-                אינדקס_גלובלי += 1
-
-            כל_החלקים.extend(חלקים)
-            מאגר_טקסט = ""  # מנקה את המאגר לשמירת זיכרון
-
-            # כשמצטברים מספיק chunks – שומרים ומנקים
-            if len(כל_החלקים) >= batch_size:
-                save_to_chromadb_batch(כל_החלקים)
-                סה_כ_chunks += len(כל_החלקים)
-                כל_החלקים = []
+        # כשמצטברים batch_size chunks – שומרים ומנקים
+        if len(כל_החלקים) >= batch_size:
+            save_to_chromadb_batch(כל_החלקים)
+            סה_כ_chunks += len(כל_החלקים)
+            כל_החלקים = []
 
         if progress_callback:
             progress_callback(מספר_עמוד, סה_כ_עמודים)
@@ -324,7 +349,56 @@ def hybrid_search(
             טקסטים_סופיים.append(טקסט)
             מקורות_סופיים.append(מקור)
 
-    return טקסטים_סופיים, מקורות_סופיים
+    return טקסטים_סופיים, מקורות_סופיים, [ציוני_rrf[מיד] for מיד in מזהיים_מוויינים if מיד in מזהה_לתוכן]
+
+
+def debug_search(question: str, filter_source: str | None = None) -> None:
+    """
+    מצב DEBUG: מתרגם את השאלה, מריץ hybrid_search,
+    ומדפיס את כל ה-chunks שנשלפו עם ציוני RRF שלהם.
+    """
+    לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+    # תרגום לאנגלית (כמו בחיפוש רגיל)
+    תגובת_תרגום = לקוח_anthropic.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=256,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Translate the following question to English. "
+                "Return ONLY the translated question, no explanation.\n\n"
+                f"Question: {question}"
+            ),
+        }],
+    )
+    שאלה_באנגלית = תגובת_תרגום.content[0].text.strip()
+
+    # חיפוש hybrid
+    לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
+    אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
+    טקסטים, מקורות, ציונים = hybrid_search(
+        question_en=שאלה_באנגלית,
+        collection=אוסף,
+        filter_source=filter_source,
+        n_results=15,
+    )
+
+    # הדפסת תוצאות debug
+    print(f"\n{'='*60}")
+    print(f"🔍 DEBUG MODE")
+    print(f"שאלה מקורית : {question}")
+    print(f"תרגום לאנגלית: {שאלה_באנגלית}")
+    print(f"chunks שנשלפו: {len(טקסטים)}")
+    print(f"{'='*60}\n")
+
+    for i, (טקסט, מקור, ציון) in enumerate(zip(טקסטים, מקורות, ציונים), start=1):
+        תצוגה = טקסט[:200].replace("\n", " ")
+        print(f"[{i:02d}] RRF={ציון:.6f} | {מקור}")
+        print(f"      {תצוגה}{'...' if len(טקסט) > 200 else ''}")
+        print()
+
+    print(f"{'='*60}\n")
 
 
 def search_and_answer(
@@ -359,7 +433,7 @@ def search_and_answer(
     לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
 
-    חלקים_רלוונטיים, מקורות = hybrid_search(
+    חלקים_רלוונטיים, מקורות, _ = hybrid_search(
         question_en=שאלה_באנגלית,
         collection=אוסף,
         filter_source=filter_source,
@@ -567,7 +641,14 @@ def main():
             continue
 
         # בוחר פקודה לפי הפרפיקס שהמשתמש כתב
-        if שאלה.startswith("סכם:") or שאלה.startswith("ספור:"):
+        if שאלה.lower().startswith("debug:"):
+            שאלה_בדיקה = שאלה.split(":", 1)[1].strip()
+            if not שאלה_בדיקה:
+                print("נא הקלד שאלה אחרי debug:")
+            else:
+                debug_search(שאלה_בדיקה)
+
+        elif שאלה.startswith("סכם:") or שאלה.startswith("ספור:"):
             פקודה = "סכם" if שאלה.startswith("סכם:") else "ספור"
 
             # מציג את הקבצים הזמינים
