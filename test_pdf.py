@@ -55,3 +55,42 @@ with pdfplumber.open(PDF_PATH) as pdf:
     print("=" * 70)
     from rag import _page_to_text
     print(_page_to_text(page))
+
+# ── חיפוש ChromaDB ──────────────────────────────────────────────────────────
+print("\n" + "=" * 70)
+print("🔎 חיפוש ChromaDB")
+print("=" * 70)
+
+QUESTION_HE = "מה הנפח של המאגר העליון והמאגר התחתון"
+QUESTION_EN = "What is the volume of the upper reservoir and the lower reservoir"
+TARGET_PAGE = PAGE_NUM  # בודקים אם עמוד זה מופיע בתוצאות
+
+import chromadb
+לקוח = chromadb.PersistentClient(path="chroma_db")
+אוסף = לקוח.get_or_create_collection(name="pdf_collection")
+
+print(f"שאלה (עברית): {QUESTION_HE}")
+print(f"שאלה (אנגלית): {QUESTION_EN}\n")
+
+for label, query in [("עברית", QUESTION_HE), ("אנגלית", QUESTION_EN)]:
+    תוצאות = אוסף.query(query_texts=[query], n_results=15)
+    מסמכים = תוצאות["documents"][0]
+    מטא     = תוצאות["metadatas"][0]
+    מרחקים  = תוצאות["distances"][0]
+
+    print(f"── חיפוש ב{label} ──────────────────────────────────────")
+    נמצא = False
+    for i, (מסמך, מטא_פריט, מרחק) in enumerate(zip(מסמכים, מטא, מרחקים), start=1):
+        chunk_idx = מטא_פריט.get("chunk_index", "?")
+        מקור     = מטא_פריט.get("source", "?")
+        # chunk_index = page_number - 1
+        עמוד_בפועל = chunk_idx + 1 if isinstance(chunk_idx, int) else "?"
+        סמן = " ◄◄◄ עמוד 10!" if עמוד_בפועל == TARGET_PAGE else ""
+        תצוגה = מסמך[:120].replace("\n", " ")
+        print(f"  [{i:02d}] dist={מרחק:.4f} | עמוד {עמוד_בפועל} | {מקור[:40]}{סמן}")
+        print(f"       {תצוגה}...")
+        if עמוד_בפועל == TARGET_PAGE:
+            נמצא = True
+    if not נמצא:
+        print(f"  ⚠️  עמוד {TARGET_PAGE} לא מופיע ב-15 התוצאות הראשונות!")
+    print()

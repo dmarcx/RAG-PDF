@@ -278,7 +278,7 @@ def hybrid_search(
     question_en: str,
     collection,
     filter_source: str | None = None,
-    n_results: int = 15,
+    n_results: int = 20,
     k_rrf: int = 60,
 ) -> tuple[list[str], list[str]]:
     """
@@ -301,9 +301,13 @@ def hybrid_search(
     if not כל_טקסטים:
         return [], []
 
-    # מיפוי id -> (text, source)
+    # מיפוי id -> (text, source, page_number)
     מזהה_לתוכן = {
-        כל_מזהים[i]: (כל_טקסטים[i], כל_מטא[i]["source"])
+        כל_מזהים[i]: (
+            כל_טקסטים[i],
+            כל_מטא[i]["source"],
+            כל_מטא[i].get("chunk_index", 0) + 1,  # chunk_index = page-1
+        )
         for i in range(len(כל_מזהים))
     }
 
@@ -341,15 +345,18 @@ def hybrid_search(
     מזהיים_מוויינים = sorted(ציוני_rrf, key=ציוני_rrf.__getitem__, reverse=True)[:n_results]
 
     # בונה את רשימות התוצאות
-    טקסטים_סופיים = []
-    מקורות_סופיים = []
+    טקסטים_סופיים  = []
+    מקורות_סופיים  = []
+    עמודים_סופיים  = []
     for מזהה in מזהיים_מוויינים:
         if מזהה in מזהה_לתוכן:
-            טקסט, מקור = מזהה_לתוכן[מזהה]
+            טקסט, מקור, עמוד = מזהה_לתוכן[מזהה]
             טקסטים_סופיים.append(טקסט)
             מקורות_סופיים.append(מקור)
+            עמודים_סופיים.append(עמוד)
 
-    return טקסטים_סופיים, מקורות_סופיים, [ציוני_rrf[מיד] for מיד in מזהיים_מוויינים if מיד in מזהה_לתוכן]
+    ציוני_סופיים = [ציוני_rrf[מיד] for מיד in מזהיים_מוויינים if מיד in מזהה_לתוכן]
+    return טקסטים_סופיים, מקורות_סופיים, ציוני_סופיים, עמודים_סופיים
 
 
 def debug_search(question: str, filter_source: str | None = None) -> None:
@@ -377,11 +384,11 @@ def debug_search(question: str, filter_source: str | None = None) -> None:
     # חיפוש hybrid
     לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
-    טקסטים, מקורות, ציונים = hybrid_search(
+    טקסטים, מקורות, ציונים, עמודים = hybrid_search(
         question_en=שאלה_באנגלית,
         collection=אוסף,
         filter_source=filter_source,
-        n_results=15,
+        n_results=20,
     )
 
     # הדפסת תוצאות debug
@@ -392,9 +399,9 @@ def debug_search(question: str, filter_source: str | None = None) -> None:
     print(f"chunks שנשלפו: {len(טקסטים)}")
     print(f"{'='*60}\n")
 
-    for i, (טקסט, מקור, ציון) in enumerate(zip(טקסטים, מקורות, ציונים), start=1):
+    for i, (טקסט, מקור, ציון, עמוד) in enumerate(zip(טקסטים, מקורות, ציונים, עמודים), start=1):
         תצוגה = טקסט[:200].replace("\n", " ")
-        print(f"[{i:02d}] RRF={ציון:.6f} | {מקור}")
+        print(f"[{i:02d}] RRF={ציון:.6f} | עמוד {עמוד} | {מקור}")
         print(f"      {תצוגה}{'...' if len(טקסט) > 200 else ''}")
         print()
 
@@ -433,17 +440,17 @@ def search_and_answer(
     לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
 
-    חלקים_רלוונטיים, מקורות, _ = hybrid_search(
+    חלקים_רלוונטיים, מקורות, _, עמודים = hybrid_search(
         question_en=שאלה_באנגלית,
         collection=אוסף,
         filter_source=filter_source,
-        n_results=15,
+        n_results=20,
     )
 
-    # בונה הקשר מהחלקים שנמצאו
+    # בונה הקשר מהחלקים שנמצאו כולל מקור ועמוד
     הקשר = "\n\n---\n\n".join(
-        f"[מקור: {מקור}]\n{טקסט}"
-        for מקור, טקסט in zip(מקורות, חלקים_רלוונטיים)
+        f"[מקור: {מקור} | עמוד {עמוד}]\n{טקסט}"
+        for מקור, עמוד, טקסט in zip(מקורות, עמודים, חלקים_רלוונטיים)
     )
 
     # --- שלב 3: בניית רשימת ההודעות כולל היסטוריית השיחה ---
@@ -452,9 +459,9 @@ def search_and_answer(
         "ABSOLUTE RULES:\n"
         "1. If information is NOT in the provided context - say ONLY: 'המידע לא נמצא בקטעים שנשלפו'\n"
         "2. NEVER guess, estimate, or use prior knowledge\n"
-        "3. NEVER apologize or explain - just state clearly what was found or not found\n\n"
+        "3. NEVER apologize or explain - just state clearly what was found or not found\n"
+        "4. Always cite the source filename AND page number (עמוד) for every piece of information\n\n"
         "ענה בשפה שבה נשאלת השאלה המקורית (עברית או אנגלית).\n"
-        "ציין מאיזה קובץ המידע מגיע.\n\n"
         f"הקשר מהמסמכים:\n{הקשר}"
     )
 
