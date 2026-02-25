@@ -152,8 +152,12 @@ if קוד_שפה == "he":
     )
 
 # ========================
-# כותרת ראשית
+# לוגו + כותרת ראשית
 # ========================
+col_logo = st.columns([1, 2, 1])[1]  # עמודה מרכזית מתוך 3
+with col_logo:
+    st.image("SLD LOGO.png", use_container_width=True)
+
 st.markdown(
     f"<h1 style='text-align:center;'>{t('main_header')}</h1>"
     f"<h3 style='text-align:center; color:gray;'>{t('main_title')}</h3>",
