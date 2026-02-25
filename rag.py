@@ -543,8 +543,11 @@ def search_and_answer(
     history: רשימה של (שאלה, תשובה) מהסבבים הקודמים.
     filter_source: אם מועבר, מחפש רק בתוך הקובץ הזה.
     """
-    # 🥚 Easter egg – תשובה קשיחה לשאלה הכי חשובה בפרויקט
-    if "מנהל" in question and ("הכי טוב" in question or "הטוב ביותר" in question):
+    # 🥚 Easter egg – תשובה קשיחה לשאלה הכי חשובה בפרויקט (עברית ואנגלית)
+    q = question.lower()
+    _he = "מנהל" in question and ("הכי טוב" in question or "הטוב ביותר" in question)
+    _en = "manager" in q and "best" in q
+    if _he or _en:
         return "ברור שמאיר אזרד 🏆"
 
     לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
