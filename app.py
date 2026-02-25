@@ -14,7 +14,6 @@ from rag import (
     list_sources,
     search_and_answer,
     summarize_file,
-    count_standards,
     count_pdf_pages,
     process_large_pdf,
     delete_source,
@@ -34,7 +33,7 @@ st.set_page_config(
 # כותרת ראשית
 # ========================
 st.markdown("# MANARA Project")
-st.title("📄 RAG-PDF – שאל שאלות על המסמכים שלך")
+st.title("📄 שאל שאלות למסמכי ה-BOD של פרויקט מנרה")
 st.markdown("---")
 
 # ========================
@@ -171,7 +170,7 @@ with st.sidebar:
 st.subheader("🔧 בחר מצב")
 מצב = st.radio(
     "מצב פעולה:",
-    options=["❓ שאלה חופשית", "📋 סכם מסמך", "🔢 ספור תקנים"],
+    options=["❓ שאלה חופשית", "📋 סכם מסמך"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -258,19 +257,3 @@ elif מצב == "📋 סכם מסמך":
             st.markdown("### 📄 סיכום")
             st.markdown(סיכום)
 
-# ========================
-# מצב: ספירת תקנים
-# ========================
-elif מצב == "🔢 ספור תקנים":
-    st.subheader("🔢 ספור תקנים במסמך")
-
-    if not מקורות:
-        st.error("אין מסמכים טעונים. העלה PDF תחילה.")
-    else:
-        קובץ_נבחר = st.selectbox("בחר מסמך לספירת תקנים:", מקורות)
-
-        if st.button("🔢 ספור", type="primary", use_container_width=False):
-            with st.spinner(f"סופר תקנים ב-{קובץ_נבחר}..."):
-                תוצאה = count_standards(קובץ_נבחר)
-            st.markdown("### 📊 תוצאה")
-            st.markdown(f"```\n{תוצאה}\n```")
