@@ -485,15 +485,20 @@ def debug_search(question: str, filter_source: str | None = None) -> None:
     """
     לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-    # תרגום לאנגלית (כמו בחיפוש רגיל)
+    # תרגום מקצועי-הנדסי לאנגלית (זהה לשלב 1 ב-search_and_answer)
     תגובת_תרגום = לקוח_anthropic.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=256,
         messages=[{
             "role": "user",
             "content": (
-                "Translate the following question to English. "
-                "Return ONLY the translated question, no explanation.\n\n"
+                "Translate the following technical query to professional engineering English. "
+                "Use accurate engineering terminology. Examples: "
+                "שנאים→Transformers, משאבות→Pumps, צינורות→Pipes/Conduits, מאגר→Reservoir, "
+                "תחנת שאיבה→Pumping Station, קוטר→Diameter, לחץ→Pressure, ספיקה→Flow Rate, "
+                "מנהרה→Tunnel, סכר→Dam, מפעל מים→Water Treatment Plant, "
+                "מחולל→Generator, לוח חשמל→Switchboard, כבל→Cable, עמוד→Pole/Column. "
+                "Return ONLY the translated query, no explanation.\n\n"
                 f"Question: {question}"
             ),
         }],
@@ -540,15 +545,20 @@ def search_and_answer(
     """
     לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-    # --- שלב 1: תרגום השאלה לאנגלית לשיפור החיפוש הסמנטי ---
+    # --- שלב 1: תרגום מקצועי-הנדסי לאנגלית לשיפור החיפוש הסמנטי ---
     תגובת_תרגום = לקוח_anthropic.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=256,
         messages=[{
             "role": "user",
             "content": (
-                "Translate the following question to English. "
-                "Return ONLY the translated question, no explanation.\n\n"
+                "Translate the following technical query to professional engineering English. "
+                "Use accurate engineering terminology. Examples: "
+                "שנאים→Transformers, משאבות→Pumps, צינורות→Pipes/Conduits, מאגר→Reservoir, "
+                "תחנת שאיבה→Pumping Station, קוטר→Diameter, לחץ→Pressure, ספיקה→Flow Rate, "
+                "מנהרה→Tunnel, סכר→Dam, מפעל מים→Water Treatment Plant, "
+                "מחולל→Generator, לוח חשמל→Switchboard, כבל→Cable, עמוד→Pole/Column. "
+                "Return ONLY the translated query, no explanation.\n\n"
                 f"Question: {question}"
             ),
         }],
