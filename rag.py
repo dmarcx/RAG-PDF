@@ -1,9 +1,18 @@
 import os
+import re
+import shutil
 import anthropic
 import chromadb
 import pdfplumber
 from dotenv import load_dotenv
 from rank_bm25 import BM25Okapi
+
+# cohere אופציונלי – נדרש ל-Reranking (pip install cohere, ו-COHERE_API_KEY ב-.env)
+try:
+    import cohere as _cohere
+    _COHERE_AVAILABLE = True
+except ImportError:
+    _COHERE_AVAILABLE = False
 
 load_dotenv()  # טוען את משתני הסביבה מקובץ .env
 
@@ -71,47 +80,155 @@ def count_pdf_pages(file_path: str) -> int:
 
 
 def save_to_chromadb_batch(chunks: list[dict]) -> None:
-    """שומר אצווה של chunks ל-ChromaDB – גרסה יעילה לקבצים גדולים."""
+    """שומר אצווה של chunks ל-ChromaDB - כולל page_number + full_page_content במטא."""
     if not chunks:
         return
 
     לקוח = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח.get_or_create_collection(name="pdf_collection")
 
-    מזהים  = [f"{c['source']}__chunk_{c['chunk_index']}" for c in chunks]
+    מזהים  = [f"{c['source']}__p{c['page_number']}__s{c['chunk_serial']}" for c in chunks]
     מסמכים = [c["text"] for c in chunks]
-    מטא    = [{"source": c["source"], "chunk_index": c["chunk_index"]} for c in chunks]
+    מטא    = [
+        {
+            "source":           c["source"],
+            "page_number":      c["page_number"],
+            "chunk_serial":     c["chunk_serial"],
+            "full_page_content": c["full_page_content"],
+        }
+        for c in chunks
+    ]
 
     אוסף.add(ids=מזהים, documents=מסמכים, metadatas=מטא)
+
+
+def clear_chroma_db() -> None:
+    """
+    מאפס את אוסף pdf_collection ב-ChromaDB דרך ה-API.
+    משתמש ב-API ולא במחיקת קבצים – עובד גם כאשר הקובץ תפוס (Windows).
+    """
+    לקוח = chromadb.PersistentClient(path="chroma_db")
+    try:
+        לקוח.delete_collection(name="pdf_collection")
+        print("האוסף pdf_collection נמחק בהצלחה.")
+    except Exception:
+        print("האוסף לא נמצא – אין מה למחוק.")
+
+
+def _extract_section_header(text: str) -> str | None:
+    """
+    מחלץ את הכותרת הממוספרת העמוקה ביותר מתוך טקסט העמוד.
+    למשל: '6.2.3 Design description' יועדף על '6.2 Overview' (עמוק יותר = ספציפי יותר).
+    כותרת עברית תשמש גיבוי בלבד אם לא נמצאה כותרת ממוספרת.
+    """
+    כותרת_נבחרת = None
+    עומק_מקסימלי = -1
+
+    for שורה in text.splitlines():
+        שורה = שורה.strip()
+        if not שורה or len(שורה) > 100:
+            continue
+        # כותרת ממוספרת: "6.2" / "6.2.3" – מגביל ל-2 ספרות ראשיות + אות גדולה, מונע "738.00 m3"
+        m = re.match(r'^([1-9]\d{0,1}(?:\.\d{1,2}){1,2})\s+[A-Z]', שורה)
+        if m:
+            עומק = m.group(1).count('.')
+            if עומק > עומק_מקסימלי:
+                עומק_מקסימלי = עומק
+                כותרת_נבחרת = שורה
+        # מילות מפתח עבריות – גיבוי בלבד אם אין כותרת ממוספרת
+        elif כותרת_נבחרת is None:
+            if re.match(r'^(פרק|סעיף|פסקה|חלק|נספח|תוספת|נוהל|הגדרות|מבוא)\b', שורה):
+                כותרת_נבחרת = שורה
+
+    return כותרת_נבחרת
+
+
+def _generate_chunk_context(
+    לקוח_anthropic,
+    source_name: str,
+    page_text: str,
+) -> str:
+    """
+    Contextual Retrieval: מייצר משפט הקשר קצר (עד 50 מילים) לכל עמוד.
+    המשפט מוסף לתחילת כל Chunk מאותו עמוד לפני יצירת הוקטור ב-ChromaDB.
+    מייצר פעם אחת לעמוד (לא לכל chunk) – חיסכון ב-N-1 קריאות API לעמוד.
+    """
+    try:
+        תגובה = לקוח_anthropic.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Document: {source_name}\n"
+                    f"Page text (first 600 chars): {page_text[:600]}\n\n"
+                    "Write ONE sentence (max 50 words) describing what this page covers. "
+                    "Include: document name, section topic, key technical terms "
+                    "(units like mio m3/MCM, numeric values, categories). "
+                    "Return ONLY the sentence."
+                ),
+            }],
+        )
+        return תגובה.content[0].text.strip()
+    except Exception:
+        return ""  # fallback – הchunk יישמר ללא הקשר
 
 
 def process_large_pdf(
     file_path: str,
     source_name: str,
-    chunk_size: int = 1500,   # שמור לתאימות אחורה, לא בשימוש יותר
-    overlap: int = 200,       # שמור לתאימות אחורה, לא בשימוש יותר
+    chunk_size: int = 500,
+    overlap: int = 100,
     batch_size: int = 200,
     progress_callback=None,
 ) -> int:
     """
-    מעבד קובץ PDF עמוד-עמוד: כל עמוד = chunk אחד שלם.
-    שומר ל-ChromaDB באצוות. מחזיר את מספר ה-chunks שנוצרו.
-    progress_callback(page, total) – אם מועבר, נקרא אחרי כל עמוד.
+    Parent Document Retrieval indexing:
+    - כל עמוד מחולק ל-chunks קטנים (chunk_size תווים, overlap חפיפה)
+    - במטא של כל chunk נשמר הטקסט המלא של העמוד (full_page_content)
+    - בשלב השאילה יישלח ל-Claude העמוד המלא (לא רק ה-chunk)
     """
+    # אתחול לקוח Anthropic לשימוש ב-Contextual Retrieval (פעם אחת לאינדוקס)
+    לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
     סה_כ_עמודים = count_pdf_pages(file_path)
     כל_החלקים: list[dict] = []
     סה_כ_chunks = 0
+    סידורי_גלובלי = 0  # chunk serial רץ עבור מזהה ייחודי
 
     for מספר_עמוד, טקסט_עמוד in enumerate(load_pdf_pages(file_path), start=1):
-        טקסט = טקסט_עמוד.strip()
-        if טקסט:  # מדלג עמודים ריקים לחלוטין
-            כל_החלקים.append({
-                "source": source_name,
-                "chunk_index": מספר_עמוד - 1,
-                "text": טקסט,
-            })
+        טקסט_מלא = טקסט_עמוד.strip()
+        if not טקסט_מלא:
+            if progress_callback:
+                progress_callback(מספר_עמוד, סה_כ_עמודים)
+            continue
 
-        # כשמצטברים batch_size chunks – שומרים ומנקים
+        # בניית prefix: שם קובץ + כותרת סעיף (אם קיימת) – משפר התאמת BM25 וסמנטיקה
+        כותרת_סעיף = _extract_section_header(טקסט_מלא)
+        prefix = f"[מקור: {source_name}"
+        if כותרת_סעיף:
+            prefix += f" | סעיף: {כותרת_סעיף}"
+        prefix += "]\n"
+
+        # Contextual Retrieval: קריאת LLM פעם אחת לעמוד – משותף לכל ה-chunks שלו
+        הקשר_עמוד = _generate_chunk_context(לקוח_anthropic, source_name, טקסט_מלא)
+
+        # חיתוך העמוד ל-chunks קטנים
+        עמדה_ב_טקסט = 0
+        while עמדה_ב_טקסט < len(טקסט_מלא):
+            חלק_גולמי = טקסט_מלא[עמדה_ב_טקסט:עמדה_ב_טקסט + chunk_size]
+            # הקשר LLM → prefix → גוף הchunk – full_page_content נשאר נקי
+            חלק = (f"{הקשר_עמוד}\n" if הקשר_עמוד else "") + prefix + חלק_גולמי
+            כל_החלקים.append({
+                "source":            source_name,
+                "page_number":       מספר_עמוד,
+                "chunk_serial":      סידורי_גלובלי,
+                "text":              חלק,
+                "full_page_content": טקסט_מלא,
+            })
+            סידורי_גלובלי += 1
+            עמדה_ב_טקסט += chunk_size - overlap
+
+        # שמירה באצווה
         if len(כל_החלקים) >= batch_size:
             save_to_chromadb_batch(כל_החלקים)
             סה_כ_chunks += len(כל_החלקים)
@@ -120,7 +237,6 @@ def process_large_pdf(
         if progress_callback:
             progress_callback(מספר_עמוד, סה_כ_עמודים)
 
-    # שומרים את השארית
     if כל_החלקים:
         save_to_chromadb_batch(כל_החלקים)
         סה_כ_chunks += len(כל_החלקים)
@@ -299,14 +415,15 @@ def hybrid_search(
     כל_מזהים  = כל_הביאה["ids"]
 
     if not כל_טקסטים:
-        return [], []
+        return [], [], [], [], []
 
-    # מיפוי id -> (text, source, page_number)
+    # מיפוי id -> (chunk_text, source, page_number, full_page_content)
     מזהה_לתוכן = {
         כל_מזהים[i]: (
             כל_טקסטים[i],
             כל_מטא[i]["source"],
-            כל_מטא[i].get("chunk_index", 0) + 1,  # chunk_index = page-1
+            כל_מטא[i].get("page_number", כל_מטא[i].get("chunk_index", 0) + 1),
+            כל_מטא[i].get("full_page_content", כל_טקסטים[i]),  # fallback: החזר chunk עצמו
         )
         for i in range(len(כל_מזהים))
     }
@@ -320,8 +437,8 @@ def hybrid_search(
     # מיון BM25 לפי ציון יורד
     סדר_bm25 = sorted(range(len(כל_טקסטים)), key=lambda i: ציוני_bm25[i], reverse=True)
 
-    # --- חיפוש סמנטי ב-ChromaDB ---
-    n_sem = min(n_results * 3, len(כל_טקסטים))
+    # --- חיפוש סמנטי ב-ChromaDB: מספר תוצאות דינמי לפי n_results ---
+    n_sem = min(n_results, len(כל_טקסטים))
     תוצאות_סם = collection.query(
         query_texts=[question_en],
         n_results=n_sem,
@@ -348,15 +465,17 @@ def hybrid_search(
     טקסטים_סופיים  = []
     מקורות_סופיים  = []
     עמודים_סופיים  = []
+    פול_סופיים    = []  # full_page_content
     for מזהה in מזהיים_מוויינים:
         if מזהה in מזהה_לתוכן:
-            טקסט, מקור, עמוד = מזהה_לתוכן[מזהה]
+            טקסט, מקור, עמוד, פול = מזהה_לתוכן[מזהה]
             טקסטים_סופיים.append(טקסט)
             מקורות_סופיים.append(מקור)
             עמודים_סופיים.append(עמוד)
+            פול_סופיים.append(פול)
 
     ציוני_סופיים = [ציוני_rrf[מיד] for מיד in מזהיים_מוויינים if מיד in מזהה_לתוכן]
-    return טקסטים_סופיים, מקורות_סופיים, ציוני_סופיים, עמודים_סופיים
+    return טקסטים_סופיים, מקורות_סופיים, ציוני_סופיים, עמודים_סופיים, פול_סופיים
 
 
 def debug_search(question: str, filter_source: str | None = None) -> None:
@@ -384,7 +503,7 @@ def debug_search(question: str, filter_source: str | None = None) -> None:
     # חיפוש hybrid
     לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
-    טקסטים, מקורות, ציונים, עמודים = hybrid_search(
+    טקסטים, מקורות, ציונים, עמודים, _ = hybrid_search(
         question_en=שאלה_באנגלית,
         collection=אוסף,
         filter_source=filter_source,
@@ -436,22 +555,90 @@ def search_and_answer(
     )
     שאלה_באנגלית = תגובת_תרגום.content[0].text.strip()
 
-    # --- שלב 2: Hybrid Search (סמנטיקה + BM25) עם השאלה האנגלית ---
+    # --- שלב 1.5: הרחבת שאילתה – 2 גרסאות אנגלית נוספות ---
+    תגובת_הרחבה = לקוח_anthropic.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=200,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Generate 2 alternative English search queries for the following question. "
+                "Query 1: use abbreviated technical units (e.g. 'mio m3', 'MCM', 'million m3', 'Mm3'). "
+                "Query 2: use expanded descriptive terms (e.g. 'million cubic meters', 'storage capacity', 'total volume'). "
+                "Return ONLY the 2 queries, one per line, no numbering or explanation.\n\n"
+                f"Original query: {שאלה_באנגלית}"
+            ),
+        }],
+    )
+    גרסאות_נוספות = [
+        ש.strip()
+        for ש in תגובת_הרחבה.content[0].text.strip().splitlines()
+        if ש.strip()
+    ][:2]  # מקסימום 2 גרסאות נוספות
+    כל_שאילתות = [שאלה_באנגלית] + גרסאות_נוספות
+
+    # --- שלב 2: Hybrid Search על כל גרסאות השאילתה + מיזוג תוצאות ---
     לקוח_chroma = chromadb.PersistentClient(path="chroma_db")
     אוסף = לקוח_chroma.get_or_create_collection(name="pdf_collection")
 
-    חלקים_רלוונטיים, מקורות, _, עמודים = hybrid_search(
-        question_en=שאלה_באנגלית,
-        collection=אוסף,
-        filter_source=filter_source,
-        n_results=20,
-    )
+    # מיזוג לפי מפתח (source, page) – שומר ציון RRF גבוה ביותר מכל הגרסאות
+    מיטב_לפי_עמוד: dict[tuple, dict] = {}
 
-    # בונה הקשר מהחלקים שנמצאו כולל מקור ועמוד
-    הקשר = "\n\n---\n\n".join(
-        f"[מקור: {מקור} | עמוד {עמוד}]\n{טקסט}"
-        for מקור, עמוד, טקסט in zip(מקורות, עמודים, חלקים_רלוונטיים)
-    )
+    for שאילתה_רחבה in כל_שאילתות:
+        _, מקורות_q, ציונים_q, עמודים_q, פולים_q = hybrid_search(
+            question_en=שאילתה_רחבה,
+            collection=אוסף,
+            filter_source=filter_source,
+            n_results=50,  # top_k מוגדל ל-50 לרשת רחבה יותר
+        )
+        for מקור, ציון, עמוד, פול in zip(מקורות_q, ציונים_q, עמודים_q, פולים_q):
+            מפתח = (מקור, עמוד)
+            if מפתח not in מיטב_לפי_עמוד or ציון > מיטב_לפי_עמוד[מפתח]["ציון"]:
+                מיטב_לפי_עמוד[מפתח] = {
+                    "ציון": ציון,
+                    "full": פול,
+                    "source": מקור,
+                    "page": עמוד,
+                }
+
+    # --- שלב 2.5: Reranking עם Cohere (אם זמין) או מיון RRF רגיל ---
+    MAX_PAGES = 10       # עמודים שמגיעים ל-Claude בסופו של דבר
+    RERANK_WINDOW = 100  # עמודים מקסימליים שנשלחים ל-Cohere לדירוג
+    ממוין_ראשוני = sorted(מיטב_לפי_עמוד.values(), key=lambda x: x["ציון"], reverse=True)
+
+    _cohere_key = os.environ.get("COHERE_API_KEY")
+    print(f"[CHECK] Cohere API Key detected: {'YES' if _cohere_key else 'NO'}")
+
+    if _COHERE_AVAILABLE and _cohere_key:
+        print("[CHECK] Reranker Status: ACTIVE (Using Cohere)")
+        # Reranking: שולח עד RERANK_WINDOW עמודים ל-Cohere, מקבל חזרה MAX_PAGES
+        co = _cohere.ClientV2(api_key=_cohere_key)
+        מועמדים_לrerank = ממוין_ראשוני[:RERANK_WINDOW]
+        תגובת_rerank = co.rerank(
+            model="rerank-v3.5",
+            query=שאלה_באנגלית,
+            documents=[item["full"][:1500] for item in מועמדים_לrerank],
+            top_n=min(MAX_PAGES, len(מועמדים_לrerank)),
+        )
+        ממוין = [
+            {**מועמדים_לrerank[r.index], "cohere_score": r.relevance_score}
+            for r in תגובת_rerank.results
+        ]
+        for i, item in enumerate(ממוין, 1):
+            print(f"  [{i:02d}] Cohere={item['cohere_score']:.4f} | עמוד {item['page']} | {item['source']}")
+    else:
+        print("[CHECK] Reranker Status: INACTIVE (Fallback to RRF)")
+        # fallback: מיון לפי ציון RRF ללא Cohere
+        ממוין = ממוין_ראשוני[:MAX_PAGES]
+        for i, item in enumerate(ממוין, 1):
+            print(f"  [{i:02d}] RRF={item['ציון']:.6f} | עמוד {item['page']} | {item['source']}")
+
+    קטעי_הקשר = [
+        f"[מקור: {item['source']} | עמוד {item['page']}]\n{item['full']}"
+        for item in ממוין
+    ]
+
+    הקשר = "\n\n---\n\n".join(קטעי_הקשר)
 
     # --- שלב 3: בניית רשימת ההודעות כולל היסטוריית השיחה ---
     system_prompt = (
@@ -460,7 +647,9 @@ def search_and_answer(
         "1. If information is NOT in the provided context - say ONLY: 'המידע לא נמצא בקטעים שנשלפו'\n"
         "2. NEVER guess, estimate, or use prior knowledge\n"
         "3. NEVER apologize or explain - just state clearly what was found or not found\n"
-        "4. Always cite the source filename AND page number (עמוד) for every piece of information\n\n"
+        "4. Always cite the source filename AND page number (עמוד) for every piece of information\n"
+        "5. Volume data may appear as full numbers (e.g. 1,164,000 m3) OR in millions "
+        "(e.g. 1.18 mio m3 = 1,180,000 m3). Treat them as equivalent when cross-referencing data.\n\n"
         "ענה בשפה שבה נשאלת השאלה המקורית (עברית או אנגלית).\n"
         f"הקשר מהמסמכים:\n{הקשר}"
     )
