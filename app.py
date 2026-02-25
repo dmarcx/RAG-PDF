@@ -33,7 +33,7 @@ st.set_page_config(
 # כותרת ראשית
 # ========================
 st.markdown("# MANARA Project")
-st.title("📄 שאל שאלות למסמכי ה-BOD של פרויקט מנרה")
+st.title("📄 Ask questions about Manara Project BOD documents")
 st.markdown("---")
 
 # ========================
@@ -71,82 +71,45 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ========================
-    # העלאת קבצי PDF חדשים
-    # ========================
-    st.header("⬆️ העלה מסמך חדש")
-    קבצים_שהועלו = st.file_uploader(
-        "בחר קובץ PDF",
-        type=["pdf"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
+    # הגנת סיסמה – גישת ניהול בלבד
+    סיסמת_ניהול = st.text_input(
+        "", type="password", placeholder="Admin password...",
+        key="admin_pwd", label_visibility="collapsed",
     )
+    מורשה_ניהול = סיסמת_ניהול == "UPLOAD"
 
-    if קבצים_שהועלו:
-        if st.button("📥 טען לתוך המערכת", use_container_width=True):
-            # מוודא שתיקיית pdfs קיימת
-            os.makedirs("pdfs", exist_ok=True)
-            מקורות_קיימים = get_existing_sources()
-            נוספו = 0
+    if מורשה_ניהול:
+        # ========================
+        # העלאת קבצי PDF חדשים
+        # ========================
+        st.header("⬆️ העלה מסמך חדש")
+        קבצים_שהועלו = st.file_uploader(
+            "בחר קובץ PDF",
+            type=["pdf"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
 
-            for קובץ in קבצים_שהועלו:
-                if קובץ.name in מקורות_קיימים:
-                    st.warning(f"כבר קיים: {קובץ.name}")
-                    continue
-
-                # שמירה לדיסק בתיקיית pdfs
+        if קבצים_שהועלו:
+            if st.button("📥 טען לתוך המערכת", use_container_width=True):
+                # מוודא שתיקיית pdfs קיימת
                 os.makedirs("pdfs", exist_ok=True)
-                נתיב = os.path.join("pdfs", קובץ.name)
-                with open(נתיב, "wb") as f:
-                    f.write(קובץ.getbuffer())
-
-                # מציג שורת סטטוס + progress bar לקבצים גדולים
-                st.markdown(f"**מעבד:** {קובץ.name}")
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-
-                def progress_callback(עמוד, סה_כ, _bar=progress_bar, _txt=status_text):
-                    _bar.progress(עמוד / סה_כ)
-                    _txt.caption(f"עמוד {עמוד} / {סה_כ}")
-
-                chunks = process_large_pdf(נתיב, קובץ.name, progress_callback=progress_callback)
-                progress_bar.progress(1.0)
-                status_text.caption(f"✅ נשמרו {chunks} חלקים")
-                נוספו += 1
-
-            if נוספו > 0:
-                st.success(f"נוספו {נוספו} קובץ/קבצים בהצלחה!")
-                st.rerun()
-
-    st.markdown("---")
-
-    # ========================
-    # סריקת תיקיית pdfs קיימת
-    # ========================
-    st.header("🔍 סרוק תיקיית pdfs")
-    st.caption("מאנדקס קבצים שהועתקו ידנית לתיקייה")
-
-    if st.button("🔄 סרוק ואנדקס קבצים חדשים", use_container_width=True):
-        תיקיית_pdf = "pdfs"
-        if not os.path.isdir(תיקיית_pdf):
-            st.error("תיקיית pdfs לא קיימת.")
-        else:
-            # מוצא קבצים בתיקייה שעוד לא ב-ChromaDB
-            מקורות_קיימים = get_existing_sources()
-            כל_קבצי_pdf = [
-                ש for ש in os.listdir(תיקיית_pdf)
-                if ש.lower().endswith(".pdf")
-            ]
-            קבצים_חדשים = [ש for ש in כל_קבצי_pdf if ש not in מקורות_קיימים]
-
-            if not קבצים_חדשים:
-                st.info("כל הקבצים בתיקייה כבר מאונדקסים.")
-            else:
-                st.info(f"נמצאו {len(קבצים_חדשים)} קבצים חדשים לאינדוקס.")
+                מקורות_קיימים = get_existing_sources()
                 נוספו = 0
-                for שם_קובץ in קבצים_חדשים:
-                    נתיב = os.path.join(תיקיית_pdf, שם_קובץ)
-                    st.markdown(f"**מעבד:** {שם_קובץ}")
+
+                for קובץ in קבצים_שהועלו:
+                    if קובץ.name in מקורות_קיימים:
+                        st.warning(f"כבר קיים: {קובץ.name}")
+                        continue
+
+                    # שמירה לדיסק בתיקיית pdfs
+                    os.makedirs("pdfs", exist_ok=True)
+                    נתיב = os.path.join("pdfs", קובץ.name)
+                    with open(נתיב, "wb") as f:
+                        f.write(קובץ.getbuffer())
+
+                    # מציג שורת סטטוס + progress bar לקבצים גדולים
+                    st.markdown(f"**מעבד:** {קובץ.name}")
                     progress_bar = st.progress(0)
                     status_text = st.empty()
 
@@ -154,13 +117,61 @@ with st.sidebar:
                         _bar.progress(עמוד / סה_כ)
                         _txt.caption(f"עמוד {עמוד} / {סה_כ}")
 
-                    chunks = process_large_pdf(נתיב, שם_קובץ, progress_callback=progress_callback)
+                    chunks = process_large_pdf(נתיב, קובץ.name, progress_callback=progress_callback)
                     progress_bar.progress(1.0)
-                    status_text.caption(f"✅ {chunks} חלקים")
+                    status_text.caption(f"✅ נשמרו {chunks} חלקים")
                     נוספו += 1
 
-                st.success(f"אונדקסו {נוספו} קבצים בהצלחה!")
-                st.rerun()
+                if נוספו > 0:
+                    st.success(f"נוספו {נוספו} קובץ/קבצים בהצלחה!")
+                    st.rerun()
+
+        st.markdown("---")
+
+        # ========================
+        # סריקת תיקיית pdfs קיימת
+        # ========================
+        st.header("🔍 סרוק תיקיית pdfs")
+        st.caption("מאנדקס קבצים שהועתקו ידנית לתיקייה")
+
+        if st.button("🔄 סרוק ואנדקס קבצים חדשים", use_container_width=True):
+            תיקיית_pdf = "pdfs"
+            if not os.path.isdir(תיקיית_pdf):
+                st.error("תיקיית pdfs לא קיימת.")
+            else:
+                # מוצא קבצים בתיקייה שעוד לא ב-ChromaDB
+                מקורות_קיימים = get_existing_sources()
+                כל_קבצי_pdf = [
+                    ש for ש in os.listdir(תיקיית_pdf)
+                    if ש.lower().endswith(".pdf")
+                ]
+                קבצים_חדשים = [ש for ש in כל_קבצי_pdf if ש not in מקורות_קיימים]
+
+                if not קבצים_חדשים:
+                    st.info("כל הקבצים בתיקייה כבר מאונדקסים.")
+                else:
+                    st.info(f"נמצאו {len(קבצים_חדשים)} קבצים חדשים לאינדוקס.")
+                    נוספו = 0
+                    for שם_קובץ in קבצים_חדשים:
+                        נתיב = os.path.join(תיקיית_pdf, שם_קובץ)
+                        st.markdown(f"**מעבד:** {שם_קובץ}")
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+
+                        def progress_callback(עמוד, סה_כ, _bar=progress_bar, _txt=status_text):
+                            _bar.progress(עמוד / סה_כ)
+                            _txt.caption(f"עמוד {עמוד} / {סה_כ}")
+
+                        chunks = process_large_pdf(נתיב, שם_קובץ, progress_callback=progress_callback)
+                        progress_bar.progress(1.0)
+                        status_text.caption(f"✅ {chunks} חלקים")
+                        נוספו += 1
+
+                    st.success(f"אונדקסו {נוספו} קבצים בהצלחה!")
+                    st.rerun()
+
+    else:
+        st.caption("🔒 Administrative access required for indexing")
 
 # ========================
 # אזור ראשי – שאלות ותשובות
