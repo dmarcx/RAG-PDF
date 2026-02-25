@@ -547,8 +547,10 @@ def search_and_answer(
     q = question.lower()
     _he = "מנהל" in question and ("הכי טוב" in question or "הטוב ביותר" in question)
     _en = "manager" in q and "best" in q
-    if _he or _en:
+    if _he:
         return "ברור שמאיר אזרד 🏆"
+    if _en:
+        return "Of Course Meir Azerad 🏆"
 
     לקוח_anthropic = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
