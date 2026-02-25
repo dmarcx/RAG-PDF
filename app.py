@@ -69,7 +69,7 @@ TRANSLATIONS = {
     },
     "he": {
         "main_header":       "פרויקט מנרה",
-        "main_title":        "📄 שאל שאלות על מסמכי BOD של פרויקט מנרה",
+        "main_title":        "📄 שאל שאלות על מסמכי בסיס נתונים של פרויקט מנרה",
         "docs_header":       "📂 מסמכים טעונים",
         "no_docs":           "אין מסמכים טעונים עדיין.",
         "del_help":          "מחק את {}",
@@ -154,8 +154,11 @@ if קוד_שפה == "he":
 # ========================
 # כותרת ראשית
 # ========================
-st.markdown(f"# {t('main_header')}")
-st.title(t("main_title"))
+st.markdown(
+    f"<h1 style='text-align:center;'>{t('main_header')}</h1>"
+    f"<h3 style='text-align:center; color:gray;'>{t('main_title')}</h3>",
+    unsafe_allow_html=True,
+)
 st.markdown("---")
 
 # ========================
