@@ -154,7 +154,7 @@ if קוד_שפה == "he":
 # ========================
 # לוגו + כותרת ראשית
 # ========================
-col_logo = st.columns([1, 2, 1])[1]  # עמודה מרכזית מתוך 3
+col_logo = st.columns([1.5, 1, 1.5])[1]  # עמודה מרכזית צרה יותר – לוגו קטן בחצי
 with col_logo:
     st.image("SLD LOGO.png", use_container_width=True)
 
