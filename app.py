@@ -54,6 +54,7 @@ TRANSLATIONS = {
         "mode_qa":           "❓ Free Question",
         "mode_summarize":    "📋 Summarize Document",
         "qa_header":         "❓ Free Question",
+        "guide_btn":         "📖 User Guide",
         "filter_label":      "Filter documents (leave empty = all):",
         "clear_btn":         "🗑️ Clear",
         "filter_active":     "🔍 Searching only in: **{}**",
@@ -98,6 +99,7 @@ TRANSLATIONS = {
         "mode_qa":           "❓ שאלה חופשית",
         "mode_summarize":    "📋 סכם מסמך",
         "qa_header":         "❓ שאלה חופשית",
+        "guide_btn":         "📖 מדריך משתמש",
         "filter_label":      "סנן מסמכים (ריק = כולם):",
         "clear_btn":         "🗑️ נקה",
         "filter_active":     "🔍 מחפש רק ב: **{}**",
@@ -134,6 +136,23 @@ def t(key: str, *args) -> str:
     """מחזיר מחרוזת מתורגמת לפי שפת הממשק הנוכחית."""
     s = TRANSLATIONS[קוד_שפה].get(key, key)
     return s.format(*args) if args else s
+
+
+@st.dialog("📖 User Guide / מדריך משתמש", width="large")
+def show_user_guide():
+    """פותח חלון מודאל עם מדריך למשתמש בשפה הנוכחית."""
+    lang = "he" if st.session_state.get("lang", "English") == "עברית" else "en"
+    try:
+        with open("USER_GUIDE.md", encoding="utf-8") as f:
+            content = f.read()
+        # המסמך מחולק לחלק אנגלי וחלק עברי ע"י ---\n---\n
+        parts = content.split("---\n---\n")
+        if lang == "he" and len(parts) > 1:
+            st.markdown(parts[1])
+        else:
+            st.markdown(parts[0])
+    except FileNotFoundError:
+        st.error("USER_GUIDE.md not found.")
 
 
 # ========================
@@ -177,6 +196,10 @@ with st.sidebar:
             "עברית" if st.session_state.get("lang", "English") == "English" else "English"
         )
         st.rerun()
+
+    # כפתור מדריך למשתמש – פותח דיאלוג מודאל עם המדריך בשפה הנוכחית
+    if st.button(t("guide_btn"), key="guide_open", use_container_width=True):
+        show_user_guide()
 
     st.markdown("---")
     st.header(t("docs_header"))
