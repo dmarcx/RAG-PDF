@@ -649,7 +649,12 @@ def search_and_answer(
         "3. NEVER apologize or explain - just state clearly what was found or not found\n"
         "4. Always cite the source filename AND page number (עמוד) for every piece of information\n"
         "5. Volume data may appear as full numbers (e.g. 1,164,000 m3) OR in millions "
-        "(e.g. 1.18 mio m3 = 1,180,000 m3). Treat them as equivalent when cross-referencing data.\n\n"
+        "(e.g. 1.18 mio m3 = 1,180,000 m3). Treat them as equivalent when cross-referencing data.\n"
+        "6. CONFLICT DETECTION: Scan ALL retrieved chunks. If different numerical values or facts "
+        "appear for the same data point — whether across documents or within one document — "
+        "flag it explicitly: '⚠️ שים לב: נמצא מידע סותר בין המקורות'\n"
+        "7. SOURCE COMPARISON: Never assume the first document is the correct one. "
+        "Present ALL versions found in the context and cite each with its source filename and page number.\n\n"
         "ענה בשפה שבה נשאלת השאלה המקורית (עברית או אנגלית).\n"
         f"הקשר מהמסמכים:\n{הקשר}"
     )
