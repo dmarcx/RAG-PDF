@@ -170,12 +170,13 @@ st.markdown("---")
 # ========================
 with st.sidebar:
 
-    # בורר שפה – ראשון בסיידבר
-    st.selectbox(
-        "🌐 Language / שפה",
-        options=["English", "עברית"],
-        key="lang",
-    )
+    # כפתור החלפת שפה – מציג את השפה הנגדית; לחיצה מחליפה ומרעננת
+    btn_label = "🌐 עב" if st.session_state.get("lang", "English") == "English" else "🌐 EN"
+    if st.button(btn_label, key="lang_toggle"):
+        st.session_state["lang"] = (
+            "עברית" if st.session_state.get("lang", "English") == "English" else "English"
+        )
+        st.rerun()
 
     st.markdown("---")
     st.header(t("docs_header"))
