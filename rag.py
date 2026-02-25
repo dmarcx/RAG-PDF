@@ -393,7 +393,7 @@ def delete_source(source_name: str) -> int:
 def hybrid_search(
     question_en: str,
     collection,
-    filter_source: str | None = None,
+    filter_source: str | list[str] | None = None,
     n_results: int = 20,
     k_rrf: int = 60,
 ) -> tuple[list[str], list[str]]:
@@ -402,8 +402,15 @@ def hybrid_search(
     - BM25 על כל ה-chunks
     - חיפוש סמנטי ב-ChromaDB
     - שילוב 50/50 באמצעות Reciprocal Rank Fusion
+    filter_source: None = כל המסמכים | str = מסמך אחד | list[str] = מסמכים נבחרים
     """
-    where_filter = {"source": filter_source} if filter_source else None
+    # בניית פילטר ChromaDB – תמיכה במסמך יחיד, רשימה, או ללא סינון
+    if filter_source is None:
+        where_filter = None
+    elif isinstance(filter_source, list):
+        where_filter = {"source": {"$in": filter_source}}
+    else:
+        where_filter = {"source": filter_source}
 
     # שלף את כל ה-chunks הרלוונטיים
     כל_הביאה = collection.get(
@@ -535,13 +542,13 @@ def debug_search(question: str, filter_source: str | None = None) -> None:
 def search_and_answer(
     question: str,
     history: list[tuple[str, str]] | None = None,
-    filter_source: str | None = None,
+    filter_source: str | list[str] | None = None,
 ) -> str:
     """
     מתרגם את השאלה לאנגלית, מחפש ב-ChromaDB את 15 החלקים הרלוונטיים,
     ושולח אותם יחד עם השאלה המקורית והיסטוריית השיחה ל-Anthropic API.
     history: רשימה של (שאלה, תשובה) מהסבבים הקודמים.
-    filter_source: אם מועבר, מחפש רק בתוך הקובץ הזה.
+    filter_source: None=כל המסמכים | str=מסמך אחד | list[str]=מסמכים נבחרים
     """
     # 🥚 Easter egg – תשובה קשיחה לשאלה הכי חשובה בפרויקט (עברית ואנגלית)
     q = question.lower()

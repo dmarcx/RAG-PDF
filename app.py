@@ -54,10 +54,10 @@ TRANSLATIONS = {
         "mode_qa":           "❓ Free Question",
         "mode_summarize":    "📋 Summarize Document",
         "qa_header":         "❓ Free Question",
-        "filter_all":        "🌐 All Documents",
-        "filter_label":      "Search within:",
+        "filter_label":      "Filter documents (leave empty = all):",
         "clear_btn":         "🗑️ Clear",
         "filter_active":     "🔍 Searching only in: **{}**",
+        "filter_multi":      "🔍 Searching in {} selected documents",
         "chat_placeholder":  "Ask a question (Hebrew or English)...",
         "no_docs_error":     "No documents loaded. Please upload a PDF first.",
         "searching":         "Searching for answer...",
@@ -98,10 +98,10 @@ TRANSLATIONS = {
         "mode_qa":           "❓ שאלה חופשית",
         "mode_summarize":    "📋 סכם מסמך",
         "qa_header":         "❓ שאלה חופשית",
-        "filter_all":        "🌐 כל המסמכים",
-        "filter_label":      "חפש בתוך:",
+        "filter_label":      "סנן מסמכים (ריק = כולם):",
         "clear_btn":         "🗑️ נקה",
         "filter_active":     "🔍 מחפש רק ב: **{}**",
+        "filter_multi":      "🔍 מחפש ב-{} מסמכים נבחרים",
         "chat_placeholder":  "שאל שאלה (עברית או אנגלית)...",
         "no_docs_error":     "אין מסמכים טעונים. העלה PDF תחילה.",
         "searching":         "מחפש תשובה...",
@@ -334,15 +334,16 @@ if מצב == t("mode_qa"):
     if "chat_history" not in st.session_state:
         st.session_state["chat_history"] = []
 
-    # סינון לפי מסמך ספציפי + כפתור ניקוי היסטוריה
+    # סינון לפי מסמכים נבחרים + כפתור ניקוי היסטוריה
     col_filter, col_clear = st.columns([3, 1])
     with col_filter:
-        אפשרויות_סינון = [t("filter_all")] + מקורות
-        בחירת_סינון = st.selectbox(
+        מסמכים_נבחרים = st.multiselect(
             t("filter_label"),
-            אפשרויות_סינון,
+            options=מקורות,
+            default=[],
             key="source_filter",
             label_visibility="collapsed",
+            placeholder=t("filter_label"),
         )
     with col_clear:
         if st.session_state["chat_history"]:
@@ -350,11 +351,15 @@ if מצב == t("mode_qa"):
                 st.session_state["chat_history"] = []
                 st.rerun()
 
-    # ממיר את הבחירה לפרמטר סינון (None = כל המסמכים)
-    סינון_פעיל = None if בחירת_סינון.startswith("🌐") else בחירת_סינון
-
-    if סינון_פעיל:
+    # ממיר את הבחירה לפרמטר סינון (None = כל המסמכים, רשימה = סינון מרובה)
+    if not מסמכים_נבחרים:
+        סינון_פעיל = None
+    elif len(מסמכים_נבחרים) == 1:
+        סינון_פעיל = מסמכים_נבחרים[0]
         st.caption(t("filter_active", סינון_פעיל))
+    else:
+        סינון_פעיל = מסמכים_נבחרים
+        st.caption(t("filter_multi", len(מסמכים_נבחרים)))
 
     # הצגת ההיסטוריה כבועות שיחה
     for שאלה_קודמת, תשובה_קודמת in st.session_state["chat_history"]:
