@@ -138,22 +138,6 @@ def t(key: str, *args) -> str:
     return s.format(*args) if args else s
 
 
-@st.dialog("📖 User Guide / מדריך משתמש", width="large")
-def show_user_guide():
-    """פותח חלון מודאל עם מדריך למשתמש בשפה הנוכחית."""
-    lang = "he" if st.session_state.get("lang", "English") == "עברית" else "en"
-    try:
-        with open("USER_GUIDE.md", encoding="utf-8") as f:
-            content = f.read()
-        # המסמך מחולק לחלק אנגלי וחלק עברי ע"י ---\n---\n
-        parts = content.split("---\n---\n")
-        if lang == "he" and len(parts) > 1:
-            st.markdown(parts[1])
-        else:
-            st.markdown(parts[0])
-    except FileNotFoundError:
-        st.error("USER_GUIDE.md not found.")
-
 
 # ========================
 # CSS לתמיכה ב-RTL בעברית
@@ -197,9 +181,18 @@ with st.sidebar:
         )
         st.rerun()
 
-    # כפתור מדריך למשתמש – פותח דיאלוג מודאל עם המדריך בשפה הנוכחית
-    if st.button(t("guide_btn"), key="guide_open", use_container_width=True):
-        show_user_guide()
+    # כפתור מדריך למשתמש – פותח חלון צף עם המדריך בשפה הנוכחית
+    with st.popover(t("guide_btn"), use_container_width=True):
+        try:
+            with open("USER_GUIDE.md", encoding="utf-8") as _f:
+                _content = _f.read()
+            _parts = _content.split("---\n---\n")
+            if קוד_שפה == "he" and len(_parts) > 1:
+                st.markdown(_parts[1])
+            else:
+                st.markdown(_parts[0])
+        except FileNotFoundError:
+            st.error("USER_GUIDE.md not found.")
 
     st.markdown("---")
     st.header(t("docs_header"))
