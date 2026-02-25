@@ -20,6 +20,100 @@ from rag import (
 )
 
 # ========================
+# מילון תרגומים – כל מחרוזות ה-UI
+# ========================
+TRANSLATIONS = {
+    "en": {
+        "main_header":       "MANARA Project",
+        "main_title":        "📄 Ask questions about Manara Project BOD documents",
+        "docs_header":       "📂 Loaded Documents",
+        "no_docs":           "No documents loaded yet.",
+        "del_help":          "Delete {}",
+        "del_confirm":       "Delete **{}** from the DB?",
+        "del_yes":           "✅ Yes, Delete",
+        "del_cancel":        "❌ Cancel",
+        "del_success":       "Deleted {} chunks of {}",
+        "admin_placeholder": "Admin password...",
+        "admin_locked":      "🔒 Administrative access required for indexing",
+        "upload_header":     "⬆️ Upload New Document",
+        "upload_label":      "Select PDF file",
+        "upload_btn":        "📥 Load into System",
+        "already_exists":    "Already exists: {}",
+        "processing":        "**Processing:** {}",
+        "saved_chunks":      "✅ Saved {} chunks",
+        "upload_success":    "Added {} file(s) successfully!",
+        "scan_header":       "🔍 Scan pdfs folder",
+        "scan_caption":      "Index files copied manually to the folder",
+        "scan_btn":          "🔄 Scan & Index New Files",
+        "scan_no_folder":    "pdfs folder does not exist.",
+        "scan_all_indexed":  "All files in folder are already indexed.",
+        "scan_found":        "Found {} new files to index.",
+        "scan_chunks":       "✅ {} chunks",
+        "scan_success":      "Indexed {} files successfully!",
+        "mode_subheader":    "🔧 Select Mode",
+        "mode_qa":           "❓ Free Question",
+        "mode_summarize":    "📋 Summarize Document",
+        "qa_header":         "❓ Free Question",
+        "filter_all":        "🌐 All Documents",
+        "filter_label":      "Search within:",
+        "clear_btn":         "🗑️ Clear",
+        "filter_active":     "🔍 Searching only in: **{}**",
+        "chat_placeholder":  "Ask a question (Hebrew or English)...",
+        "no_docs_error":     "No documents loaded. Please upload a PDF first.",
+        "searching":         "Searching for answer...",
+        "summarize_header":  "📋 Summarize Document",
+        "summarize_select":  "Select document to summarize:",
+        "summarize_btn":     "✍️ Summarize",
+        "summarizing":       "Summarizing {}...",
+        "summary_title":     "### 📄 Summary",
+    },
+    "he": {
+        "main_header":       "פרויקט מנרה",
+        "main_title":        "📄 שאל שאלות על מסמכי BOD של פרויקט מנרה",
+        "docs_header":       "📂 מסמכים טעונים",
+        "no_docs":           "אין מסמכים טעונים עדיין.",
+        "del_help":          "מחק את {}",
+        "del_confirm":       "למחוק את **{}** מה-DB?",
+        "del_yes":           "✅ כן, מחק",
+        "del_cancel":        "❌ ביטול",
+        "del_success":       "נמחקו {} chunks של {}",
+        "admin_placeholder": "סיסמת ניהול...",
+        "admin_locked":      "🔒 נדרשת גישת מנהל לאינדוקס",
+        "upload_header":     "⬆️ העלה מסמך חדש",
+        "upload_label":      "בחר קובץ PDF",
+        "upload_btn":        "📥 טען לתוך המערכת",
+        "already_exists":    "כבר קיים: {}",
+        "processing":        "**מעבד:** {}",
+        "saved_chunks":      "✅ נשמרו {} חלקים",
+        "upload_success":    "נוספו {} קובץ/קבצים בהצלחה!",
+        "scan_header":       "🔍 סרוק תיקיית pdfs",
+        "scan_caption":      "מאנדקס קבצים שהועתקו ידנית לתיקייה",
+        "scan_btn":          "🔄 סרוק ואנדקס קבצים חדשים",
+        "scan_no_folder":    "תיקיית pdfs לא קיימת.",
+        "scan_all_indexed":  "כל הקבצים בתיקייה כבר מאונדקסים.",
+        "scan_found":        "נמצאו {} קבצים חדשים לאינדוקס.",
+        "scan_chunks":       "✅ {} חלקים",
+        "scan_success":      "אונדקסו {} קבצים בהצלחה!",
+        "mode_subheader":    "🔧 בחר מצב",
+        "mode_qa":           "❓ שאלה חופשית",
+        "mode_summarize":    "📋 סכם מסמך",
+        "qa_header":         "❓ שאלה חופשית",
+        "filter_all":        "🌐 כל המסמכים",
+        "filter_label":      "חפש בתוך:",
+        "clear_btn":         "🗑️ נקה",
+        "filter_active":     "🔍 מחפש רק ב: **{}**",
+        "chat_placeholder":  "שאל שאלה (עברית או אנגלית)...",
+        "no_docs_error":     "אין מסמכים טעונים. העלה PDF תחילה.",
+        "searching":         "מחפש תשובה...",
+        "summarize_header":  "📋 סכם מסמך",
+        "summarize_select":  "בחר מסמך לסיכום:",
+        "summarize_btn":     "✍️ סכם",
+        "summarizing":       "מסכם את {}...",
+        "summary_title":     "### 📄 סיכום",
+    },
+}
+
+# ========================
 # הגדרות בסיסיות של הדף
 # ========================
 st.set_page_config(
@@ -30,17 +124,54 @@ st.set_page_config(
 )
 
 # ========================
+# קוד שפה – נקרא מ-session_state לפני כל רינדור
+# session_state["lang"] מאוכלס מהריצה הקודמת (ברירת מחדל: English)
+# ========================
+קוד_שפה = "he" if st.session_state.get("lang", "English") == "עברית" else "en"
+
+
+def t(key: str, *args) -> str:
+    """מחזיר מחרוזת מתורגמת לפי שפת הממשק הנוכחית."""
+    s = TRANSLATIONS[קוד_שפה].get(key, key)
+    return s.format(*args) if args else s
+
+
+# ========================
+# CSS לתמיכה ב-RTL בעברית
+# ========================
+if קוד_שפה == "he":
+    st.markdown(
+        """
+        <style>
+        .main .block-container { direction: rtl; text-align: right; }
+        .stChatMessage           { direction: rtl; }
+        .stChatInput textarea    { direction: rtl; text-align: right; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ========================
 # כותרת ראשית
 # ========================
-st.markdown("# MANARA Project")
-st.title("📄 Ask questions about Manara Project BOD documents")
+st.markdown(f"# {t('main_header')}")
+st.title(t("main_title"))
 st.markdown("---")
 
 # ========================
-# סרגל צד – מקורות קיימים + העלאת קבצים
+# סרגל צד – בורר שפה + מסמכים + העלאה
 # ========================
 with st.sidebar:
-    st.header("📂 מסמכים טעונים")
+
+    # בורר שפה – ראשון בסיידבר
+    st.selectbox(
+        "🌐 Language / שפה",
+        options=["English", "עברית"],
+        key="lang",
+    )
+
+    st.markdown("---")
+    st.header(t("docs_header"))
 
     # שולף ומציג את הקבצים הקיימים ב-ChromaDB
     מקורות = sorted(get_existing_sources())
@@ -49,31 +180,30 @@ with st.sidebar:
             עמ1, עמ2 = st.columns([0.82, 0.18])
             עמ1.markdown(f"✅ {שם}")
             # כפתור מחיקה קטן ליד כל קובץ
-            if עמ2.button("🗑", key=f"del_{שם}", help=f"מחק את {שם}"):
+            if עמ2.button("🗑", key=f"del_{שם}", help=t("del_help", שם)):
                 st.session_state["pending_delete"] = שם
 
         # אישור מחיקה – מוצג רק כשנלחץ כפתור מחיקה
         if "pending_delete" in st.session_state:
             שם_למחיקה = st.session_state["pending_delete"]
-            st.warning(f"למחוק את **{שם_למחיקה}** מה-DB?")
+            st.warning(t("del_confirm", שם_למחיקה))
             אישור, ביטול = st.columns(2)
-            if אישור.button("✅ כן, מחק", key="confirm_delete", use_container_width=True):
+            if אישור.button(t("del_yes"), key="confirm_delete", use_container_width=True):
                 נמחקו = delete_source(שם_למחיקה)
                 del st.session_state["pending_delete"]
-                st.success(f"נמחקו {נמחקו} chunks של {שם_למחיקה}")
+                st.success(t("del_success", נמחקו, שם_למחיקה))
                 st.rerun()
-            if ביטול.button("❌ ביטול", key="cancel_delete", use_container_width=True):
+            if ביטול.button(t("del_cancel"), key="cancel_delete", use_container_width=True):
                 del st.session_state["pending_delete"]
                 st.rerun()
     else:
-        st.info("אין מסמכים טעונים עדיין.")
-
+        st.info(t("no_docs"))
 
     st.markdown("---")
 
     # הגנת סיסמה – גישת ניהול בלבד
     סיסמת_ניהול = st.text_input(
-        "", type="password", placeholder="Admin password...",
+        "", type="password", placeholder=t("admin_placeholder"),
         key="admin_pwd", label_visibility="collapsed",
     )
     מורשה_ניהול = סיסמת_ניהול == "UPLOAD"
@@ -82,48 +212,46 @@ with st.sidebar:
         # ========================
         # העלאת קבצי PDF חדשים
         # ========================
-        st.header("⬆️ העלה מסמך חדש")
+        st.header(t("upload_header"))
         קבצים_שהועלו = st.file_uploader(
-            "בחר קובץ PDF",
+            t("upload_label"),
             type=["pdf"],
             accept_multiple_files=True,
             label_visibility="collapsed",
         )
 
         if קבצים_שהועלו:
-            if st.button("📥 טען לתוך המערכת", use_container_width=True):
-                # מוודא שתיקיית pdfs קיימת
+            if st.button(t("upload_btn"), use_container_width=True):
                 os.makedirs("pdfs", exist_ok=True)
                 מקורות_קיימים = get_existing_sources()
                 נוספו = 0
 
                 for קובץ in קבצים_שהועלו:
                     if קובץ.name in מקורות_קיימים:
-                        st.warning(f"כבר קיים: {קובץ.name}")
+                        st.warning(t("already_exists", קובץ.name))
                         continue
 
                     # שמירה לדיסק בתיקיית pdfs
-                    os.makedirs("pdfs", exist_ok=True)
                     נתיב = os.path.join("pdfs", קובץ.name)
                     with open(נתיב, "wb") as f:
                         f.write(קובץ.getbuffer())
 
                     # מציג שורת סטטוס + progress bar לקבצים גדולים
-                    st.markdown(f"**מעבד:** {קובץ.name}")
+                    st.markdown(t("processing", קובץ.name))
                     progress_bar = st.progress(0)
                     status_text = st.empty()
 
                     def progress_callback(עמוד, סה_כ, _bar=progress_bar, _txt=status_text):
                         _bar.progress(עמוד / סה_כ)
-                        _txt.caption(f"עמוד {עמוד} / {סה_כ}")
+                        _txt.caption(f"{עמוד} / {סה_כ}")
 
                     chunks = process_large_pdf(נתיב, קובץ.name, progress_callback=progress_callback)
                     progress_bar.progress(1.0)
-                    status_text.caption(f"✅ נשמרו {chunks} חלקים")
+                    status_text.caption(t("saved_chunks", chunks))
                     נוספו += 1
 
                 if נוספו > 0:
-                    st.success(f"נוספו {נוספו} קובץ/קבצים בהצלחה!")
+                    st.success(t("upload_success", נוספו))
                     st.rerun()
 
         st.markdown("---")
@@ -131,13 +259,13 @@ with st.sidebar:
         # ========================
         # סריקת תיקיית pdfs קיימת
         # ========================
-        st.header("🔍 סרוק תיקיית pdfs")
-        st.caption("מאנדקס קבצים שהועתקו ידנית לתיקייה")
+        st.header(t("scan_header"))
+        st.caption(t("scan_caption"))
 
-        if st.button("🔄 סרוק ואנדקס קבצים חדשים", use_container_width=True):
+        if st.button(t("scan_btn"), use_container_width=True):
             תיקיית_pdf = "pdfs"
             if not os.path.isdir(תיקיית_pdf):
-                st.error("תיקיית pdfs לא קיימת.")
+                st.error(t("scan_no_folder"))
             else:
                 # מוצא קבצים בתיקייה שעוד לא ב-ChromaDB
                 מקורות_קיימים = get_existing_sources()
@@ -148,40 +276,40 @@ with st.sidebar:
                 קבצים_חדשים = [ש for ש in כל_קבצי_pdf if ש not in מקורות_קיימים]
 
                 if not קבצים_חדשים:
-                    st.info("כל הקבצים בתיקייה כבר מאונדקסים.")
+                    st.info(t("scan_all_indexed"))
                 else:
-                    st.info(f"נמצאו {len(קבצים_חדשים)} קבצים חדשים לאינדוקס.")
+                    st.info(t("scan_found", len(קבצים_חדשים)))
                     נוספו = 0
                     for שם_קובץ in קבצים_חדשים:
                         נתיב = os.path.join(תיקיית_pdf, שם_קובץ)
-                        st.markdown(f"**מעבד:** {שם_קובץ}")
+                        st.markdown(t("processing", שם_קובץ))
                         progress_bar = st.progress(0)
                         status_text = st.empty()
 
                         def progress_callback(עמוד, סה_כ, _bar=progress_bar, _txt=status_text):
                             _bar.progress(עמוד / סה_כ)
-                            _txt.caption(f"עמוד {עמוד} / {סה_כ}")
+                            _txt.caption(f"{עמוד} / {סה_כ}")
 
                         chunks = process_large_pdf(נתיב, שם_קובץ, progress_callback=progress_callback)
                         progress_bar.progress(1.0)
-                        status_text.caption(f"✅ {chunks} חלקים")
+                        status_text.caption(t("scan_chunks", chunks))
                         נוספו += 1
 
-                    st.success(f"אונדקסו {נוספו} קבצים בהצלחה!")
+                    st.success(t("scan_success", נוספו))
                     st.rerun()
 
     else:
-        st.caption("🔒 Administrative access required for indexing")
+        st.caption(t("admin_locked"))
 
 # ========================
 # אזור ראשי – שאלות ותשובות
 # ========================
 
 # בחירת מצב פעולה
-st.subheader("🔧 בחר מצב")
+st.subheader(t("mode_subheader"))
 מצב = st.radio(
-    "מצב פעולה:",
-    options=["❓ שאלה חופשית", "📋 סכם מסמך"],
+    "mode",
+    options=[t("mode_qa"), t("mode_summarize")],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -191,26 +319,26 @@ st.markdown("---")
 # ========================
 # מצב: שאלה חופשית
 # ========================
-if מצב == "❓ שאלה חופשית":
-    st.subheader("❓ שאלה חופשית")
+if מצב == t("mode_qa"):
+    st.subheader(t("qa_header"))
 
     # אתחול היסטוריית שיחה ב-session_state
     if "chat_history" not in st.session_state:
-        st.session_state["chat_history"] = []  # רשימה של (שאלה, תשובה)
+        st.session_state["chat_history"] = []
 
     # סינון לפי מסמך ספציפי + כפתור ניקוי היסטוריה
     col_filter, col_clear = st.columns([3, 1])
     with col_filter:
-        אפשרויות_סינון = ["🌐 כל המסמכים"] + מקורות
+        אפשרויות_סינון = [t("filter_all")] + מקורות
         בחירת_סינון = st.selectbox(
-            "חפש בתוך:",
+            t("filter_label"),
             אפשרויות_סינון,
             key="source_filter",
             label_visibility="collapsed",
         )
     with col_clear:
         if st.session_state["chat_history"]:
-            if st.button("🗑️ נקה", key="clear_history", use_container_width=True):
+            if st.button(t("clear_btn"), key="clear_history", use_container_width=True):
                 st.session_state["chat_history"] = []
                 st.rerun()
 
@@ -218,7 +346,7 @@ if מצב == "❓ שאלה חופשית":
     סינון_פעיל = None if בחירת_סינון.startswith("🌐") else בחירת_סינון
 
     if סינון_פעיל:
-        st.caption(f"🔍 מחפש רק ב: **{סינון_פעיל}**")
+        st.caption(t("filter_active", סינון_פעיל))
 
     # הצגת ההיסטוריה כבועות שיחה
     for שאלה_קודמת, תשובה_קודמת in st.session_state["chat_history"]:
@@ -228,11 +356,11 @@ if מצב == "❓ שאלה חופשית":
             st.markdown(תשובה_קודמת)
 
     # תיבת שאלה חדשה
-    שאלה = st.chat_input("שאל שאלה (עברית או אנגלית)...")
+    שאלה = st.chat_input(t("chat_placeholder"))
 
     if שאלה:
         if not get_existing_sources():
-            st.error("אין מסמכים טעונים. העלה PDF תחילה.")
+            st.error(t("no_docs_error"))
         else:
             # מציג את שאלת המשתמש מיד
             with st.chat_message("user"):
@@ -240,7 +368,7 @@ if מצב == "❓ שאלה חופשית":
 
             # שולח לClaude עם כל ההיסטוריה + סינון קובץ
             with st.chat_message("assistant"):
-                with st.spinner("מחפש תשובה..."):
+                with st.spinner(t("searching")):
                     תשובה = search_and_answer(
                         שאלה,
                         history=st.session_state["chat_history"],
@@ -254,17 +382,16 @@ if מצב == "❓ שאלה חופשית":
 # ========================
 # מצב: סיכום מסמך
 # ========================
-elif מצב == "📋 סכם מסמך":
-    st.subheader("📋 סכם מסמך")
+elif מצב == t("mode_summarize"):
+    st.subheader(t("summarize_header"))
 
     if not מקורות:
-        st.error("אין מסמכים טעונים. העלה PDF תחילה.")
+        st.error(t("no_docs_error"))
     else:
-        קובץ_נבחר = st.selectbox("בחר מסמך לסיכום:", מקורות)
+        קובץ_נבחר = st.selectbox(t("summarize_select"), מקורות)
 
-        if st.button("✍️ סכם", type="primary", use_container_width=False):
-            with st.spinner(f"מסכם את {קובץ_נבחר}..."):
+        if st.button(t("summarize_btn"), type="primary", use_container_width=False):
+            with st.spinner(t("summarizing", קובץ_נבחר)):
                 סיכום = summarize_file(קובץ_נבחר)
-            st.markdown("### 📄 סיכום")
+            st.markdown(t("summary_title"))
             st.markdown(סיכום)
-
