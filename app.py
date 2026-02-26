@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit_authenticator as stauth
 from dotenv import load_dotenv
 
 # טוען משתני סביבה מ-.env
@@ -67,6 +68,14 @@ TRANSLATIONS = {
         "summarize_btn":     "✍️ Summarize",
         "summarizing":       "Summarizing {}...",
         "summary_title":     "### 📄 Summary",
+        "login_form_name":   "Login",
+        "login_username":    "Username",
+        "login_password":    "Password",
+        "login_btn":         "Login",
+        "login_error":       "❌ Incorrect username or password",
+        "login_warning":     "Please enter your username and password",
+        "logout_btn":        "🚪 Logout",
+        "welcome_user":      "👤 {}",
     },
     "he": {
         "main_header":       "פרויקט מנרה",
@@ -112,6 +121,14 @@ TRANSLATIONS = {
         "summarize_btn":     "✍️ סכם",
         "summarizing":       "מסכם את {}...",
         "summary_title":     "### 📄 סיכום",
+        "login_form_name":   "כניסה",
+        "login_username":    "שם משתמש",
+        "login_password":    "סיסמה",
+        "login_btn":         "כניסה",
+        "login_error":       "❌ שם משתמש או סיסמה שגויים",
+        "login_warning":     "אנא הכנס שם משתמש וסיסמה",
+        "logout_btn":        "🚪 יציאה",
+        "welcome_user":      "👤 {}",
     },
 }
 
@@ -169,9 +186,70 @@ st.markdown(
 st.markdown("---")
 
 # ========================
+# אימות משתמש
+# ========================
+try:
+    # המרת CREDENTIALS מ-AttrDict של Streamlit Secrets ל-dict רגיל
+    _raw = st.secrets["CREDENTIALS"]["usernames"]
+    _credentials = {
+        "usernames": {
+            _uname: {
+                "email":                 str(_u["email"]),
+                "first_name":            str(_u.get("first_name", "")),
+                "last_name":             str(_u.get("last_name", "")),
+                "password":              str(_u["password"]),
+                "roles":                 list(_u.get("roles", ["user"])),
+                "failed_login_attempts": int(_u.get("failed_login_attempts", 0)),
+                "logged_in":             bool(_u.get("logged_in", False)),
+            }
+            for _uname, _u in dict(_raw).items()
+        }
+    }
+    _cookie_key = str(st.secrets.get("COOKIE_KEY", "change_me_in_secrets"))
+except Exception as _err:
+    st.error(f"⚙️ Secrets not configured — edit .streamlit/secrets.toml\n\n`{_err}`")
+    st.stop()
+
+_authenticator = stauth.Authenticate(
+    _credentials,
+    "rag_pdf_session",    # שם הcookie
+    _cookie_key,
+    cookie_expiry_days=7,
+    auto_hash=False,      # סיסמאות כבר hashed ב-secrets.toml
+)
+
+_authenticator.login(
+    fields={
+        "Form name": t("login_form_name"),
+        "Username":  t("login_username"),
+        "Password":  t("login_password"),
+        "Login":     t("login_btn"),
+    }
+)
+
+if st.session_state.get("authentication_status") is False:
+    st.error(t("login_error"))
+    st.stop()
+elif st.session_state.get("authentication_status") is None:
+    st.warning(t("login_warning"))
+    st.stop()
+
+# ← מכאן: משתמשים מאומתים בלבד ←
+
+# ========================
 # סרגל צד – בורר שפה + מסמכים + העלאה
 # ========================
 with st.sidebar:
+
+    # שם המשתמש המחובר + כפתור התנתקות
+    st.caption(t("welcome_user", st.session_state.get("name", "")))
+    _authenticator.logout(
+        button_name=t("logout_btn"),
+        location="sidebar",
+        key="logout_btn",
+        use_container_width=True,
+    )
+    st.markdown("---")
 
     # כפתור החלפת שפה – מציג את השפה הנגדית; לחיצה מחליפה ומרעננת
     btn_label = "🌐 עב" if st.session_state.get("lang", "English") == "English" else "🌐 EN"

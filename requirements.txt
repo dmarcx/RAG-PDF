@@ -5,3 +5,4 @@ pdfplumber==0.11.9
 rank-bm25==0.2.2
 python-dotenv==1.1.0
 cohere==5.20.6
+streamlit-authenticator==0.4.2
